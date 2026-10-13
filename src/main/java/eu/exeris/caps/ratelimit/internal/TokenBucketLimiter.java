@@ -18,6 +18,15 @@ import java.util.function.LongSupplier;
  * key is refused rather than admitted unmetered, because these buckets guard credential endpoints where
  * failing open would remove the protection exactly when an attacker floods the table.
  *
+ * <p>Known limits, both accepted:
+ * <ul>
+ *   <li>The eviction scan visits every bucket, so it costs O(maxKeys) when the table is full of buckets
+ *       that have not yet refilled.</li>
+ *   <li>A bucket evicted between a {@code get} and the following {@code take} can lose that one token,
+ *       after which the client holds a full bucket again. The effect is only ever to under-limit, and only
+ *       for a bucket that was already full.</li>
+ * </ul>
+ *
  * @since 0.1.0
  */
 public final class TokenBucketLimiter {

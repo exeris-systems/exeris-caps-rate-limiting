@@ -58,14 +58,14 @@ public record RateLimitFilterSettings(List<RouteGroup> groups, List<String> trus
 
     /**
      * Reads the settings from configuration. Example:
-     * <pre>
+     * {@snippet lang=properties :
      * exeris.caps.ratelimit.groups=login,password-reset
      * exeris.caps.ratelimit.group.login.routes=POST /login
      * exeris.caps.ratelimit.group.login.capacity=5
      * exeris.caps.ratelimit.group.login.refill-seconds=60
      * exeris.caps.ratelimit.group.password-reset.routes=POST /password/reset-request, POST /password/reset
      * exeris.caps.ratelimit.trusted-proxies=10.0.0.0/8
-     * </pre>
+     * }
      *
      * @param properties configuration
      * @return the settings
