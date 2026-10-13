@@ -1,0 +1,29 @@
+{
+  "schemaVersion" : 2,
+  "stamp" : {
+    "validated" : true,
+    "compositionVersion" : "0.0.0",
+    "contentBinding" : "sha256:ccf44a7ebf4cc6078ca10d7c66370d23d86d2980524c631151823791c49a3c57"
+  },
+  "modules" : [
+    {
+      "name" : "RateLimitModule",
+      "packageName" : "eu.exeris.caps.ratelimit",
+      "qualifiedName" : "eu.exeris.caps.ratelimit.RateLimitModule",
+      "module" : {
+        "provides" : [
+          {
+            "service" : "eu.exeris.caps.ratelimit.api.RateLimitPolicy",
+            "version" : "1.0.0"
+          }
+        ],
+        "requires" : [ ]
+      }
+    }
+  ],
+  "resolutions" : [ ],
+  "initOrder" : [
+    "eu.exeris.caps.ratelimit.RateLimitModule"
+  ],
+  "warnings" : [ ]
+}
