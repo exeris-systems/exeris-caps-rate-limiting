@@ -10,8 +10,10 @@ import java.util.function.LongSupplier;
  * Binds the rate-limit filter into {@code exeris-caps-service-boundary-core}'s {@link RequestFilterChain},
  * in the {@code RATE_LIMITING} phase.
  *
- * <p>This type is the only one in the capability that names a Service Boundary type, so a composition
- * without {@code service-boundary-core} never loads it.
+ * <p>This type and the internal admission filter are the only types that load Service Boundary classes, so
+ * a composition without {@code service-boundary-core} never loads them. {@code RateLimitModule} names
+ * {@link RequestFilterChain} only in its source-retention {@code @Requires} and in Javadoc, so it leaves no
+ * reference in the class file.
  *
  * @since 0.1.0
  */
