@@ -1,0 +1,124 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    name: mvn verify (JDK ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 25 is the baseline the jar is compiled for (`maven.compiler.release` 25); 26 checks that the
+        # sources still compile on the next JDK. Both rows produce class-file major 69.
+        java: ['25', '26']
+
+    env:
+      # exeris-kernel is resolved from GitHub Packages, which asks for a token even for a public
+      # package, and a repository's own GITHUB_TOKEN cannot read packages published by another
+      # repository. PACKAGES_READ_TOKEN is a classic PAT with read:packages, set as a repository or
+      # organisation secret. .github/maven-settings.xml is the only place it is used.
+      PACKAGES_READ_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
+
+    steps:
+      - name: Checkout exeris-caps-rate-limiting
+        uses: actions/checkout@v7
+        with:
+          path: exeris-caps-rate-limiting
+
+      # The SDK and the codegen chain are not published to a Maven repository, so both are built
+      # from source at the release tag matching the version in pom.xml. An immutable ref keeps an
+      # unrelated upstream commit from turning this build red.
+      - name: Checkout exeris-sdk (v0.10.0 — matches exeris.sdk.version in the POM)
+        uses: actions/checkout@v7
+        with:
+          repository: exeris-systems/exeris-sdk
+          ref: v0.10.0
+          path: exeris-sdk
+
+      - name: Checkout exeris-tooling (v0.7.0 — matches exeris.tooling.version in the POM)
+        uses: actions/checkout@v7
+        with:
+          repository: exeris-systems/exeris-tooling
+          ref: v0.7.0
+          path: exeris-tooling
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - name: Check that the package-read token is set
+        run: |
+          if [ -z "${PACKAGES_READ_TOKEN}" ]; then
+            echo "::error::PACKAGES_READ_TOKEN is not set, so exeris-kernel cannot be resolved from GitHub Packages"
+            exit 1
+          fi
+
+      # japicmp.skip: the SDK binds a semver gate to verify whose baseline is the previous release
+      # jar, which a runner cannot resolve. That gate belongs to the SDK's own CI.
+      - name: Install exeris-sdk to the local repository
+        working-directory: exeris-sdk
+        run: mvn -B -ntp -DskipTests -Djapicmp.skip=true install
+
+      # An allowlist, not the whole reactor: exeris-e2e-tests declares the kernel at test scope, and
+      # -am does not follow BOM imports, so exeris-tooling-bom is named explicitly.
+      - name: Install the codegen chain to the local repository
+        working-directory: exeris-tooling
+        run: mvn -B -ntp -DskipTests install -pl exeris-tooling-bom,exeris-processor,exeris-codegen-maven-plugin -am
+
+      # Two passes, and the first is not redundant: exeris:generate runs at generate-sources, but the
+      # processor writes the capability metadata it reads only during compile.
+      - name: Seed capability metadata (first pass, codegen skipped)
+        working-directory: exeris-caps-rate-limiting
+        run: mvn -B -ntp -s .github/maven-settings.xml compile -Dexeris.codegen.skip=true
+
+      - name: mvn verify (second pass — generates, validates, scans the Wall)
+        working-directory: exeris-caps-rate-limiting
+        run: mvn -B -ntp -s .github/maven-settings.xml verify
+
+      - name: Assert the cap manifest was emitted and stamped
+        working-directory: exeris-caps-rate-limiting
+        run: |
+          MANIFEST=src/main/generated/java/cap-manifest.json
+          if [ ! -f "$MANIFEST" ]; then
+            echo "::error::no cap-manifest.json was emitted"
+            exit 1
+          fi
+          python3 - "$MANIFEST" <<'PY'
+          import json, re, sys
+          m = json.load(open(sys.argv[1]))
+          stamp = m.get("stamp") or {}
+          assert m.get("schemaVersion") == 2, f"unexpected schemaVersion: {m.get('schemaVersion')}"
+          assert stamp.get("validated") is True, "stamp is not validated"
+          assert re.fullmatch(r"sha256:[0-9a-f]{64}", stamp.get("contentBinding") or ""), \
+              f"bad contentBinding: {stamp.get('contentBinding')!r}"
+          names = [mod.get("qualifiedName") for mod in m.get("modules") or []]
+          assert "eu.exeris.caps.ratelimit.RateLimitModule" in names, \
+              f"module missing from manifest: {names}"
+          print("manifest OK: validated stamp, sha256 binding, module present")
+          PY
+
+      # exeris:generate writes into src/, and that tree is committed. A build whose output differs
+      # from the committed copy means the declaration and the manifest a SKU consumes disagree.
+      # --untracked-files=all also catches a file the build added.
+      - name: Assert the committed generated tree matches this build
+        working-directory: exeris-caps-rate-limiting
+        run: |
+          DRIFT=$(git status --porcelain --untracked-files=all -- src/main/generated/)
+          if [ -n "$DRIFT" ]; then
+            echo "$DRIFT"
+            git diff -- src/main/generated/ || true
+            echo "::error::src/main/generated/ does not match what this build produced; run the two-pass build and commit the result"
+            exit 1
+          fi
