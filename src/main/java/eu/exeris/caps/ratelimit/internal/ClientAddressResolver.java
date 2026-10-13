@@ -1,5 +1,6 @@
 package eu.exeris.caps.ratelimit.internal;
 
+import eu.exeris.caps.ratelimit.api.ForwardedHeader;
 import eu.exeris.caps.ratelimit.api.PeerAddressSource;
 import eu.exeris.kernel.spi.http.HttpExchange;
 import eu.exeris.kernel.spi.http.HttpHeader;
@@ -16,12 +17,13 @@ import java.util.Optional;
 /**
  * Derives the client a rate-limit bucket belongs to.
  *
- * <p>The connection's peer address is the starting point. {@code Forwarded} (RFC 7239) or, when it is
- * absent, {@code X-Forwarded-For} is read only when that peer lies in a configured trusted-proxy network;
- * with no trusted networks configured, the default, both headers are ignored. The header's hops are
- * walked from the right, skipping trusted proxies, and the first untrusted hop is the client: every hop
- * to its left was written by that client and proves nothing. A hop that is not an address literal ends
- * the walk at the last trusted proxy.
+ * <p>The connection's peer address is the starting point. The configured {@link ForwardedHeader}, and only
+ * that one, is read, and only when the peer lies in a configured trusted-proxy network; with no trusted
+ * networks configured, the default, no header is read. The other forwarding header is never consulted,
+ * not even when the configured one is absent: a proxy writes one of them, and the other passes through
+ * from the client. The header's hops are walked from the right, skipping trusted proxies, and the first
+ * untrusted hop is the client: every hop to its left was written by that client and proves nothing. A
+ * hop that is not an address literal ends the walk at the last trusted proxy.
  *
  * <p>IPv6 clients are keyed by their /64 prefix, which is what one subscriber is normally given. Without a
  * peer address every request maps to one shared key, so the limit still applies, to all callers together.
@@ -34,10 +36,12 @@ public final class ClientAddressResolver {
     public static final String UNKNOWN = "unknown";
 
     private final List<Cidr> trustedProxies;
+    private final ForwardedHeader forwardedHeader;
     private final PeerAddressSource peerAddress;
 
-    public ClientAddressResolver(List<Cidr> trustedProxies, PeerAddressSource peerAddress) {
+    public ClientAddressResolver(List<Cidr> trustedProxies, ForwardedHeader forwardedHeader, PeerAddressSource peerAddress) {
         this.trustedProxies = List.copyOf(trustedProxies);
+        this.forwardedHeader = Objects.requireNonNull(forwardedHeader, "forwardedHeader");
         this.peerAddress = Objects.requireNonNull(peerAddress, "peerAddress");
     }
 
@@ -58,7 +62,7 @@ public final class ClientAddressResolver {
         if (peer.isEmpty() || !trusted(peer.get())) {
             return peer;
         }
-        List<String> hops = forwardedHops(exchange.request().headers());
+        List<String> hops = forwardedHops(exchange.request().headers(), forwardedHeader);
         InetAddress current = peer.get();
         for (int i = hops.size() - 1; i >= 0; i--) {
             Optional<InetAddress> hop = hopAddress(hops.get(i));
@@ -82,22 +86,18 @@ public final class ClientAddressResolver {
         return false;
     }
 
-    /** The hops of {@code Forwarded} when present, else of {@code X-Forwarded-For}, left to right. */
-    static List<String> forwardedHops(List<HttpHeader> headers) {
-        List<String> forwarded = new ArrayList<>();
-        List<String> xff = new ArrayList<>();
+    /** The hops of the selected header, left to right; the other forwarding header is not read. */
+    static List<String> forwardedHops(List<HttpHeader> headers, ForwardedHeader selected) {
+        List<String> hops = new ArrayList<>();
         for (HttpHeader header : headers) {
-            if (header.nameEqualsIgnoreCase("Forwarded")) {
-                for (String element : header.value().split(",")) {
-                    forwarded.add(forParameter(element));
-                }
-            } else if (header.nameEqualsIgnoreCase("X-Forwarded-For")) {
-                for (String hop : header.value().split(",")) {
-                    xff.add(hop.strip());
-                }
+            if (!header.nameEqualsIgnoreCase(selected.headerName())) {
+                continue;
+            }
+            for (String element : header.value().split(",")) {
+                hops.add(selected == ForwardedHeader.FORWARDED ? forParameter(element) : element.strip());
             }
         }
-        return forwarded.isEmpty() ? xff : forwarded;
+        return hops;
     }
 
     private static String forParameter(String element) {

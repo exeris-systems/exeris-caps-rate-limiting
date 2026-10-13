@@ -25,6 +25,13 @@ import java.util.function.LongSupplier;
  * and the matched route; the request body is never read. A request over its limit is answered 429 with
  * {@code Retry-After} and a problem body. Routes outside every group pass untouched.
  *
+ * <p>This is the only part of the capability that touches HTTP types (ADR-099 obligation 4: the policy
+ * caps bind as {@code RequestFilterChain} filters and answer the request themselves). It meters with a
+ * {@link TokenBucketLimiter} rather than a {@link eu.exeris.caps.ratelimit.api.RateLimitPolicy}: the
+ * policy keys its table by a 64-bit hash, so two clients can share a bucket by collision and a
+ * credential-route bucket would then be exhausted by someone else, and it reports no per-bucket state
+ * to evict. The limiter compares keys exactly and refuses new keys when its table is full.
+ *
  * @since 0.1.0
  */
 public final class RateLimitAdmissionFilter implements AdmissionFilter {
@@ -42,7 +49,7 @@ public final class RateLimitAdmissionFilter implements AdmissionFilter {
         for (String cidr : settings.trustedProxies()) {
             trusted.add(Cidr.parse(cidr));
         }
-        this.addresses = new ClientAddressResolver(trusted, peerAddress);
+        this.addresses = new ClientAddressResolver(trusted, settings.forwardedHeader(), peerAddress);
         Map<String, TokenBucketLimiter> byRoute = new HashMap<>();
         for (RouteGroup group : settings.groups()) {
             TokenBucketLimiter limiter = new TokenBucketLimiter(group.capacity(), group.refillPeriod().toNanos(),

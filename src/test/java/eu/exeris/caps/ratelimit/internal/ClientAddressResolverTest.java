@@ -1,5 +1,6 @@
 package eu.exeris.caps.ratelimit.internal;
 
+import eu.exeris.caps.ratelimit.api.ForwardedHeader;
 import eu.exeris.caps.ratelimit.api.PeerAddressSource;
 import eu.exeris.kernel.spi.http.HttpHeader;
 import eu.exeris.kernel.spi.http.HttpMethod;
@@ -17,8 +18,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ClientAddressResolverTest {
 
     private static String client(List<String> trusted, String peer, HttpHeader... headers) {
+        return client(ForwardedHeader.X_FORWARDED_FOR, trusted, peer, headers);
+    }
+
+    private static String client(ForwardedHeader mode, List<String> trusted, String peer, HttpHeader... headers) {
         ClientAddressResolver resolver = new ClientAddressResolver(
-                trusted.stream().map(Cidr::parse).toList(),
+                trusted.stream().map(Cidr::parse).toList(), mode,
                 exchange -> Optional.ofNullable(peer));
         return resolver.clientKey(new RecordingExchange(HttpMethod.POST, "/login", Arrays.asList(headers)));
     }
@@ -35,7 +40,8 @@ class ClientAddressResolverTest {
     @DisplayName("by default no proxy is trusted, so a spoofed X-Forwarded-For is ignored")
     void defaultTrustsNone() {
         assertThat(client(List.of(), "203.0.113.7", xff("198.51.100.1"))).isEqualTo("203.0.113.7");
-        assertThat(client(List.of(), "203.0.113.7", forwarded("for=198.51.100.1"))).isEqualTo("203.0.113.7");
+        assertThat(client(ForwardedHeader.FORWARDED, List.of(), "203.0.113.7", forwarded("for=198.51.100.1")))
+                .isEqualTo("203.0.113.7");
     }
 
     @Test
@@ -69,17 +75,73 @@ class ClientAddressResolverTest {
     void garbageHop() {
         assertThat(client(List.of("10.0.0.0/8"), "10.0.0.2", xff("198.51.100.9, evil.example, 10.0.0.5")))
                 .isEqualTo("10.0.0.5");
-        assertThat(client(List.of("10.0.0.0/8"), "10.0.0.2", forwarded("for=unknown"))).isEqualTo("10.0.0.2");
+        assertThat(client(ForwardedHeader.FORWARDED, List.of("10.0.0.0/8"), "10.0.0.2", forwarded("for=unknown"))).isEqualTo("10.0.0.2");
     }
 
     @Test
-    @DisplayName("Forwarded is preferred, with quoted IPv6 and ports")
+    @DisplayName("forwarded mode reads Forwarded, with quoted IPv6 and ports, and ignores X-Forwarded-For")
     void forwardedHeader() {
-        assertThat(client(List.of("10.0.0.0/8"), "10.0.0.2",
+        assertThat(client(ForwardedHeader.FORWARDED, List.of("10.0.0.0/8"), "10.0.0.2",
                 forwarded("for=192.0.2.60;proto=https, for=\"192.0.2.43:47011\""), xff("198.51.100.1")))
                 .isEqualTo("192.0.2.43");
-        assertThat(client(List.of("10.0.0.0/8"), "10.0.0.2", forwarded("For=\"[2001:db8:cafe::17]:4711\"")))
+        assertThat(client(ForwardedHeader.FORWARDED, List.of("10.0.0.0/8"), "10.0.0.2",
+                forwarded("For=\"[2001:db8:cafe::17]:4711\"")))
                 .isEqualTo("v6:20010db8cafe0000/64");
+    }
+
+    @Test
+    @DisplayName("x-forwarded-for mode reads X-Forwarded-For and ignores Forwarded")
+    void xffModeIgnoresForwarded() {
+        assertThat(client(ForwardedHeader.X_FORWARDED_FOR, List.of("10.0.0.0/8"), "10.0.0.2",
+                forwarded("for=192.0.2.60"), xff("198.51.100.1")))
+                .isEqualTo("198.51.100.1");
+    }
+
+    @Test
+    @DisplayName("a client-sent Forwarded cannot override the X-Forwarded-For the trusted proxy appended")
+    void forwardedSpoofFails() {
+        for (String random : List.of("192.0.2.1", "192.0.2.2", "192.0.2.3")) {
+            assertThat(client(ForwardedHeader.X_FORWARDED_FOR, List.of("10.0.0.0/8"), "10.0.0.2",
+                    forwarded("for=" + random), xff("198.51.100.9")))
+                    .isEqualTo("198.51.100.9");
+        }
+    }
+
+    @Test
+    @DisplayName("a client-sent X-Forwarded-For cannot override the Forwarded the trusted proxy appended")
+    void xffSpoofFailsInForwardedMode() {
+        assertThat(client(ForwardedHeader.FORWARDED, List.of("10.0.0.0/8"), "10.0.0.2",
+                xff("192.0.2.1"), forwarded("for=198.51.100.9")))
+                .isEqualTo("198.51.100.9");
+    }
+
+    @Test
+    @DisplayName("the unselected header is never a fallback when the selected one is absent")
+    void noFallback() {
+        assertThat(client(ForwardedHeader.X_FORWARDED_FOR, List.of("10.0.0.0/8"), "10.0.0.2", forwarded("for=192.0.2.1")))
+                .isEqualTo("10.0.0.2");
+        assertThat(client(ForwardedHeader.FORWARDED, List.of("10.0.0.0/8"), "10.0.0.2", xff("192.0.2.1")))
+                .isEqualTo("10.0.0.2");
+    }
+
+    @Test
+    @DisplayName("malformed values end the walk at the last trusted proxy")
+    void malformedValues() {
+        List<String> trusted = List.of("10.0.0.0/8");
+        for (String bad : List.of("", "for=", "for=\"unterminated", "by=192.0.2.1", "for=[2001:db8::1", "for=1.2.3.4:port", "for=_hidden")) {
+            assertThat(client(ForwardedHeader.FORWARDED, trusted, "10.0.0.2", forwarded(bad))).as(bad).isEqualTo("10.0.0.2");
+        }
+        for (String bad : List.of("", " , ", "999.1.1.1", "1.2.3.4:port", "[2001:db8::1", "unknown")) {
+            assertThat(client(ForwardedHeader.X_FORWARDED_FOR, trusted, "10.0.0.2", xff(bad))).as(bad).isEqualTo("10.0.0.2");
+        }
+    }
+
+    @Test
+    @DisplayName("the forwarded-header setting parses either name, case-insensitively, and refuses others")
+    void headerParsing() {
+        assertThat(ForwardedHeader.parse("X-Forwarded-For")).isEqualTo(ForwardedHeader.X_FORWARDED_FOR);
+        assertThat(ForwardedHeader.parse(" forwarded ")).isEqualTo(ForwardedHeader.FORWARDED);
+        assertThatThrownBy(() -> ForwardedHeader.parse("x-real-ip")).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -100,7 +162,7 @@ class ClientAddressResolverTest {
     @Test
     @DisplayName("without a peer address every request shares one key")
     void unknownPeer() {
-        ClientAddressResolver resolver = new ClientAddressResolver(List.of(Cidr.parse("0.0.0.0/0")), PeerAddressSource.NONE);
+        ClientAddressResolver resolver = new ClientAddressResolver(List.of(Cidr.parse("0.0.0.0/0")), ForwardedHeader.X_FORWARDED_FOR, PeerAddressSource.NONE);
         assertThat(resolver.clientKey(new RecordingExchange(HttpMethod.POST, "/login", List.of(xff("198.51.100.1")))))
                 .isEqualTo(ClientAddressResolver.UNKNOWN);
     }

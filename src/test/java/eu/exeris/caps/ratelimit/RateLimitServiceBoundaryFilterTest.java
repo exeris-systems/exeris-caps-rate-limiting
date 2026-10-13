@@ -147,9 +147,46 @@ class RateLimitServiceBoundaryFilterTest {
                 RateLimitFilterSettings.KEY_GROUPS, "a,b",
                 "exeris.caps.ratelimit.group.a.routes", "POST /login",
                 "exeris.caps.ratelimit.group.b.routes", "POST /login")))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> RateLimitFilterSettings.fromProperties(Map.of(RateLimitFilterSettings.KEY_GROUPS, "a")))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("every unreadable setting surfaces as IllegalStateException")
+    void settingsFailuresAreIllegalState() {
+        for (String[] bad : new String[][] {
+                {RateLimitFilterSettings.KEY_GROUPS + "|a", "exeris.caps.ratelimit.group.a.routes|POST /x", "exeris.caps.ratelimit.group.a.capacity|0"},
+                {RateLimitFilterSettings.KEY_MAX_KEYS + "|0"},
+                {RateLimitFilterSettings.KEY_MAX_KEYS + "|99999999999"},
+                {RateLimitFilterSettings.KEY_FORWARDED_HEADER + "|x-real-ip"},
+                {RateLimitFilterSettings.KEY_GROUPS + "|a,b", "exeris.caps.ratelimit.group.a.routes|POST /x",
+                        "exeris.caps.ratelimit.group.b.routes|POST /x"}}) {
+            Map<String, String> props = new java.util.HashMap<>();
+            for (String entry : bad) {
+                props.put(entry.substring(0, entry.indexOf('|')), entry.substring(entry.indexOf('|') + 1));
+            }
+            assertThatThrownBy(() -> RateLimitFilterSettings.fromProperties(props))
+                    .as(props.toString()).isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Test
+    @DisplayName("the forwarding header defaults to X-Forwarded-For and is configurable")
+    void forwardedHeaderSetting() {
+        assertThat(RateLimitFilterSettings.fromProperties(Map.of()).forwardedHeader())
+                .isEqualTo(eu.exeris.caps.ratelimit.api.ForwardedHeader.X_FORWARDED_FOR);
+        assertThat(RateLimitFilterSettings.fromProperties(Map.of(RateLimitFilterSettings.KEY_FORWARDED_HEADER, "Forwarded"))
+                .forwardedHeader()).isEqualTo(eu.exeris.caps.ratelimit.api.ForwardedHeader.FORWARDED);
+    }
+
+    @Test
+    @DisplayName("behind a proxy that appends X-Forwarded-For, a client-sent Forwarded gains no fresh buckets")
+    void forwardedInjectionKeepsOneBucket() {
+        post("/password/reset", "10.0.0.2", new HttpHeader("X-Forwarded-For", "198.51.100.1"),
+                new HttpHeader("Forwarded", "for=192.0.2.1"));
+        assertThat(post("/password/reset", "10.0.0.2", new HttpHeader("X-Forwarded-For", "198.51.100.1"),
+                new HttpHeader("Forwarded", "for=192.0.2.2")).status).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
     }
 
     @Test
