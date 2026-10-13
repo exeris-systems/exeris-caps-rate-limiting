@@ -34,6 +34,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
         <exeris.sdk.version>0.10.0</exeris.sdk.version>
+        <exeris.kernel.version>0.13.0-SNAPSHOT</exeris.kernel.version>
         <exeris.tooling.version>0.7.0</exeris.tooling.version>
         <junit.version>5.11.4</junit.version>
         <assertj.version>3.27.7</assertj.version>
@@ -45,6 +46,19 @@
             <artifactId>exeris-sdk-annotations</artifactId>
             <version>${exeris.sdk.version}</version>
             <scope>provided</scope>
+        </dependency>
+        <!-- provided: the kernel that hosts the cap supplies the SPI, and the jar keeps no runtime dependency -->
+        <dependency>
+            <groupId>eu.exeris</groupId>
+            <artifactId>exeris-kernel-spi</artifactId>
+            <version>${exeris.kernel.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.exeris</groupId>
+            <artifactId>exeris-kernel-tck</artifactId>
+            <version>${exeris.kernel.version}</version>
+            <scope>test</scope>
         </dependency>
 
         <dependency>
