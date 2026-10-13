@@ -3,7 +3,7 @@
   "stamp" : {
     "validated" : true,
     "compositionVersion" : "0.0.0",
-    "contentBinding" : "sha256:ccf44a7ebf4cc6078ca10d7c66370d23d86d2980524c631151823791c49a3c57"
+    "contentBinding" : "sha256:56100d14871c5a835183c7ddc579910cc051765de86edda00bcf2c1ee7383bfd"
   },
   "modules" : [
     {
@@ -14,13 +14,13 @@
         "provides" : [
           {
             "service" : "eu.exeris.caps.ratelimit.api.RateLimitPolicy",
-            "version" : "1.0.0"
+            "version" : "0.1.0"
           }
         ],
         "requires" : [
           {
             "service" : "eu.exeris.caps.serviceboundarycore.api.RequestFilterChain",
-            "versionRange" : "[1.0.0,2.0.0)",
+            "versionRange" : "[0.1.0,0.2.0)",
             "optional" : true
           }
         ],
@@ -32,7 +32,7 @@
     {
       "module" : "eu.exeris.caps.ratelimit.RateLimitModule",
       "service" : "eu.exeris.caps.serviceboundarycore.api.RequestFilterChain",
-      "versionRange" : "[1.0.0,2.0.0)",
+      "versionRange" : "[0.1.0,0.2.0)",
       "optional" : true,
       "satisfied" : false,
       "providers" : [ ]
@@ -42,6 +42,6 @@
     "eu.exeris.caps.ratelimit.RateLimitModule"
   ],
   "warnings" : [
-    "module eu.exeris.caps.ratelimit.RateLimitModule @Requires service eu.exeris.caps.serviceboundarycore.api.RequestFilterChain version [1.0.0,2.0.0) but no @CapabilityModule provides it (optional — skipped)"
+    "module eu.exeris.caps.ratelimit.RateLimitModule @Requires service eu.exeris.caps.serviceboundarycore.api.RequestFilterChain version [0.1.0,0.2.0) but no @CapabilityModule provides it (optional — skipped)"
   ]
 }
