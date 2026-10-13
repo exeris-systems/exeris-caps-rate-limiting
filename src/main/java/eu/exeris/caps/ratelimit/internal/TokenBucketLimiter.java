@@ -81,7 +81,7 @@ public final class TokenBucketLimiter {
         }
     }
 
-    private static final class Bucket {
+    static final class Bucket {
         private long tokens;
         private long lastRefillNanos;
 
@@ -93,6 +93,10 @@ public final class TokenBucketLimiter {
         synchronized RateLimitDecision take(long now, long capacity, long period) {
             refill(now, capacity, period);
             if (tokens > 0) {
+                if (tokens >= capacity) {
+                    // A full bucket starts refilling when a token leaves it, not when it last filled.
+                    lastRefillNanos = now;
+                }
                 tokens--;
                 long untilFull = (capacity - tokens) * period - (now - lastRefillNanos);
                 return RateLimitDecision.allowed(tokens, capacity, Math.max(0L, untilFull));

@@ -85,4 +85,17 @@ class TokenBucketLimiterTest {
         assertThat(limiter.tryAcquire("c").allowed()).isTrue();
         assertThat(limiter.size()).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("a full bucket starts its refill period when the first token leaves it")
+    void fullBucketRefillStartsAtFirstTake() {
+        TokenBucketLimiter.Bucket bucket = new TokenBucketLimiter.Bucket(5, 0);
+        long period = 60 * SECOND;
+        for (int i = 0; i < 5; i++) {
+            assertThat(bucket.take(59 * SECOND, 5, period).allowed()).isTrue();
+        }
+        // One second later the bucket has not had a full period since the first token left it.
+        assertThat(bucket.take(60 * SECOND, 5, period).allowed()).isFalse();
+        assertThat(bucket.take(119 * SECOND, 5, period).allowed()).isTrue();
+    }
 }
