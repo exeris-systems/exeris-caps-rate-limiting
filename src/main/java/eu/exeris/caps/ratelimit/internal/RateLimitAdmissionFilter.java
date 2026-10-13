@@ -1,0 +1,82 @@
+package eu.exeris.caps.ratelimit.internal;
+
+import eu.exeris.caps.ratelimit.api.PeerAddressSource;
+import eu.exeris.caps.ratelimit.api.RateLimitDecision;
+import eu.exeris.caps.ratelimit.api.RateLimitFilterSettings;
+import eu.exeris.caps.ratelimit.api.RouteGroup;
+import eu.exeris.caps.serviceboundarycore.api.AdmissionFilter;
+import eu.exeris.caps.serviceboundarycore.api.AdmissionPhase;
+import eu.exeris.caps.serviceboundarycore.api.RouteMatch;
+import eu.exeris.kernel.spi.http.HttpExchange;
+import eu.exeris.kernel.spi.http.HttpHeader;
+import eu.exeris.kernel.spi.http.HttpStatus;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.LongSupplier;
+
+/**
+ * Service Boundary admission filter that meters the configured route groups per client and route.
+ *
+ * <p>It runs in the {@code RATE_LIMITING} phase, before authentication, so a throttled request costs no
+ * signature or password work. The bucket key is the client address (see {@link ClientAddressResolver})
+ * and the matched route; the request body is never read. A request over its limit is answered 429 with
+ * {@code Retry-After} and a problem body. Routes outside every group pass untouched.
+ *
+ * @since 0.1.0
+ */
+public final class RateLimitAdmissionFilter implements AdmissionFilter {
+
+    /** Filter name in the chain. */
+    public static final String NAME = "rate-limiting";
+
+    private static final String DETAIL = "Too many requests for this operation; retry later.";
+
+    private final Map<String, TokenBucketLimiter> limiterByRoute;
+    private final ClientAddressResolver addresses;
+
+    public RateLimitAdmissionFilter(RateLimitFilterSettings settings, PeerAddressSource peerAddress, LongSupplier nanoClock) {
+        List<Cidr> trusted = new ArrayList<>();
+        for (String cidr : settings.trustedProxies()) {
+            trusted.add(Cidr.parse(cidr));
+        }
+        this.addresses = new ClientAddressResolver(trusted, peerAddress);
+        Map<String, TokenBucketLimiter> byRoute = new HashMap<>();
+        for (RouteGroup group : settings.groups()) {
+            TokenBucketLimiter limiter = new TokenBucketLimiter(group.capacity(), group.refillPeriod().toNanos(),
+                    settings.maxKeysPerGroup(), nanoClock);
+            for (String route : group.routes()) {
+                byRoute.put(route, limiter);
+            }
+        }
+        this.limiterByRoute = Map.copyOf(byRoute);
+    }
+
+    @Override
+    public String name() {
+        return NAME;
+    }
+
+    @Override
+    public AdmissionPhase phase() {
+        return AdmissionPhase.RATE_LIMITING;
+    }
+
+    @Override
+    public boolean filter(HttpExchange exchange, RouteMatch routeMatch) {
+        String route = routeMatch.route().method().name() + " " + routeMatch.route().pathPattern();
+        TokenBucketLimiter limiter = limiterByRoute.get(route);
+        if (limiter == null) {
+            return true;
+        }
+        RateLimitDecision decision = limiter.tryAcquire(addresses.clientKey(exchange) + " " + route);
+        if (decision.allowed()) {
+            return true;
+        }
+        ProblemResponses.send(exchange, HttpStatus.TOO_MANY_REQUESTS, DETAIL,
+                List.of(new HttpHeader("Retry-After", Long.toString(decision.retryAfterSeconds()))));
+        return false;
+    }
+}

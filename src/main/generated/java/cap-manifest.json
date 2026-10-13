@@ -17,13 +17,31 @@
             "version" : "1.0.0"
           }
         ],
-        "requires" : [ ]
+        "requires" : [
+          {
+            "service" : "eu.exeris.caps.serviceboundarycore.api.RequestFilterChain",
+            "versionRange" : "[1.0.0,2.0.0)",
+            "optional" : true
+          }
+        ],
+        "lifecycleOwner" : "eu.exeris.caps.ratelimit.RateLimitModule"
       }
     }
   ],
-  "resolutions" : [ ],
+  "resolutions" : [
+    {
+      "module" : "eu.exeris.caps.ratelimit.RateLimitModule",
+      "service" : "eu.exeris.caps.serviceboundarycore.api.RequestFilterChain",
+      "versionRange" : "[1.0.0,2.0.0)",
+      "optional" : true,
+      "satisfied" : false,
+      "providers" : [ ]
+    }
+  ],
   "initOrder" : [
     "eu.exeris.caps.ratelimit.RateLimitModule"
   ],
-  "warnings" : [ ]
+  "warnings" : [
+    "module eu.exeris.caps.ratelimit.RateLimitModule @Requires service eu.exeris.caps.serviceboundarycore.api.RequestFilterChain version [1.0.0,2.0.0) but no @CapabilityModule provides it (optional — skipped)"
+  ]
 }
