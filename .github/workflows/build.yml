@@ -51,6 +51,15 @@ jobs:
           ref: v0.7.0
           path: exeris-tooling
 
+      # service-boundary-core provides the RequestFilterChain the filter binds to. It has no release
+      # yet, so its main branch is the version this cap builds against.
+      - name: Checkout exeris-caps-service-boundary-core (main)
+        uses: actions/checkout@v7
+        with:
+          repository: exeris-systems/exeris-caps-service-boundary-core
+          ref: main
+          path: exeris-caps-service-boundary-core
+
       - name: Set up JDK ${{ matrix.java }}
         uses: actions/setup-java@v6
         with:
@@ -76,6 +85,14 @@ jobs:
       - name: Install the codegen chain to the local repository
         working-directory: exeris-tooling
         run: mvn -B -ntp -DskipTests install -pl exeris-tooling-bom,exeris-processor,exeris-codegen-maven-plugin -am
+
+      # Built with this cap's SDK and tooling versions, so the runner needs only one of each. Its
+      # committed manifest is not regenerated here; its own CI owns that check.
+      - name: Install exeris-caps-service-boundary-core to the local repository
+        working-directory: exeris-caps-service-boundary-core
+        run: >-
+          mvn -B -ntp -s .github/maven-settings.xml -DskipTests -Dexeris.codegen.skip=true
+          -Dexeris.sdk.version=0.10.0 -Dexeris.tooling.version=0.7.0 install
 
       # Two passes, and the first is not redundant: exeris:generate runs at generate-sources, but the
       # processor writes the capability metadata it reads only during compile.
