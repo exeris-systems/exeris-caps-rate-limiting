@@ -95,6 +95,10 @@ jobs:
         {"docs-lint": "${{ needs.docs.result }}",
          "commit-lint": "${{ needs.commits.result }}",
          "pr-body-check": "${{ needs.pr-body.result }}"}
+      # This repository's own rules, applied after the shared routine's parts and under its
+      # severity tags and verdict schema. Read at the BASE commit, never at the pull request's ref:
+      # a pull request does not write the rules it is judged by.
+      repo-routine: docs/repo-review-rules.md
       # One model run per part, composed into one verdict and one comment. `pr` runs on every pull
       # request; `docs`, `records`, `code-docs` and `code` where the diff has their files. A part
       # that leaves no verdict makes the check red.
