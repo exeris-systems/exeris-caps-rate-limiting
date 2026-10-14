@@ -12,7 +12,8 @@
     <description>
         Stateful rate-limiting policy capability: a GCRA rate-limit policy, and a Service Boundary
         admission filter with per-client, per-route token buckets for credential endpoints.
-        Owns no transport and binds to no host runtime.
+        The decision path is transport-free; the admission filter is the one HTTP binding, built on the
+        kernel HTTP SPI and the Service Boundary filter chain.
     </description>
     <url>https://github.com/exeris-systems/exeris-caps-rate-limiting</url>
     <inceptionYear>2026</inceptionYear>
@@ -127,7 +128,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.5.6</version>
+                <version>3.6.0</version>
             </plugin>
         </plugins>
     </build>
