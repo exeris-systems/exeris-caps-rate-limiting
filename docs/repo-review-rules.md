@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: exeris-caps-rate-limiting
 status: active
-last-verified: 2026-10-13
+last-verified: 2026-10-14
 ---
 
 # Review rules for `exeris-caps-rate-limiting`
@@ -94,11 +94,16 @@ S7. **Verification names what ran.** CI runs `mvn verify` on JDK 25 and 26 on ev
     `target/surefire-reports` at `<sha>`, and the reviewer accepts that as the evidence of what ran
     locally. A Verification that claims a pass without a command, report path or sha → `[STYLE]`.
 
-S8. **The capability decides; it owns no transport.** `RateLimitPolicy` answers whether a key may
-    proceed at a given cost, and a consuming capability applies the `RateLimitDecision` to its own
-    response. An HTTP, header or status-code type in `api` or `internal`, or a dependency on
-    `exeris-kernel-spi` beyond the entitlement declaration (README: `provided` scope, for the
-    entitlement only) → `[HARD BLOCK]`.
+S8. **The decision is transport-free; the admission filter is the one HTTP binding.**
+    `RateLimitPolicy`, `RateLimitDecision`, `DefaultRateLimitPolicy` and the table behind them know
+    no HTTP, header or status-code type. ADR-099 obligation 4 makes the policy caps bind as
+    `RequestFilterChain` filters on `exeris-caps-service-boundary-core` that answer the request
+    themselves, so the Service Boundary admission filter (`RateLimitAdmissionFilter`) and the types it
+    needs (`ProblemResponses`, `ClientAddressResolver`, `PeerAddressSource`, which exposes
+    `HttpExchange`) may use the kernel HTTP SPI types to read headers and build the 429 response.
+    An HTTP, header or status-code type reachable from the decision path, a type outside that binding
+    that uses one, or a dependency on `exeris-kernel-spi` beyond the entitlement declaration and that
+    binding (README: `provided` scope) → `[HARD BLOCK]`.
 
 S9. **The evaluation path stays lock-free and allocation-free.** The `RateLimitPolicy` Javadoc
     requires thread safety, lock-free execution on the hot path and zero heap allocations per
