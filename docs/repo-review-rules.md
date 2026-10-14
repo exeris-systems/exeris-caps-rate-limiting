@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: exeris-caps-rate-limiting
 status: active
-last-verified: 2026-10-13
+last-verified: 2026-10-14
 ---
 
 # Review rules for `exeris-caps-rate-limiting`
