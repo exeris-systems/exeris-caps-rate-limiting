@@ -49,4 +49,37 @@ class LockFreePrimitiveTableTest {
         int slotOldAfter = table.findOrAllocateSlot(999L, t1);
         assertThat(slotOldAfter).isEqualTo(slotOld);
     }
+
+    @Test
+    @DisplayName("Refuses a slot when the table is full instead of sharing another key's slot")
+    void refusesWhenFull() {
+        LockFreePrimitiveTable table = new LockFreePrimitiveTable(16, 10_000_000_000L);
+        long now = 1_000_000_000L;
+        java.util.Set<Integer> owned = new java.util.HashSet<>();
+        for (long k = 1; k <= table.capacity(); k++) {
+            int slot = table.findOrAllocateSlot(k * 7919L, now);
+            assertThat(slot).isGreaterThanOrEqualTo(0);
+            assertThat(owned.add(slot)).isTrue();
+        }
+
+        int overflow = table.findOrAllocateSlot(0x5eedL, now);
+
+        assertThat(overflow).isEqualTo(LockFreePrimitiveTable.NO_SLOT);
+    }
+
+    @Test
+    @DisplayName("Distinct keys never share a slot")
+    void distinctKeysNeverShareSlot() {
+        LockFreePrimitiveTable table = new LockFreePrimitiveTable(4096, 10_000_000_000L);
+        long now = 1_000_000_000L;
+        java.util.Map<Integer, Long> bySlot = new java.util.HashMap<>();
+        for (long k = 1; k <= 1500; k++) {
+            long key = k * 0x9e3779b97f4a7c15L | 1L;
+            int slot = table.findOrAllocateSlot(key, now);
+            assertThat(slot).isGreaterThanOrEqualTo(0);
+            Long previous = bySlot.put(slot, key);
+            assertThat(previous).isNull();
+            assertThat(table.findOrAllocateSlot(key, now)).isEqualTo(slot);
+        }
+    }
 }

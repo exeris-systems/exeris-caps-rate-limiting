@@ -1,5 +1,6 @@
 package eu.exeris.caps.ratelimit.internal;
 
+import java.security.SecureRandom;
 import java.util.concurrent.atomic.AtomicLongArray;
 
 /**
@@ -8,9 +9,15 @@ import java.util.concurrent.atomic.AtomicLongArray;
  * <p>Uses linear probing with a bounded hop count. Dead/idle slots whose value is older
  * than {@code maxIdleNanos} are reclaimed lock-free during probing, preventing table
  * saturation without requiring background cleanup threads or GC allocation.
+ *
+ * <p>The home slot of a key is derived from a per-instance random seed, so the placement of keys
+ * cannot be predicted or aimed at one probe sequence from outside the process. A key is only ever
+ * given a slot it owns: when the probe window holds no free or reclaimable slot the lookup returns
+ * {@link #NO_SLOT} and the caller must not read or write shared state for that key.
  */
-public final class LockFreePrimitiveTable {
+public class LockFreePrimitiveTable {
 
+    public static final int NO_SLOT = -1;
     private static final int MAX_PROBE_HOPS = 16;
 
     private final AtomicLongArray keys;
@@ -18,6 +25,7 @@ public final class LockFreePrimitiveTable {
     private final int mask;
     private final int capacity;
     private final long maxIdleNanos;
+    private final long seed;
 
     public LockFreePrimitiveTable(int initialCapacity, long maxIdleNanos) {
         int cap = Math.max(16, roundToPowerOfTwo(initialCapacity));
@@ -26,17 +34,22 @@ public final class LockFreePrimitiveTable {
         this.keys = new AtomicLongArray(cap);
         this.values = new AtomicLongArray(cap);
         this.maxIdleNanos = Math.max(1_000_000_000L, maxIdleNanos); // at least 1s
+        this.seed = new SecureRandom().nextLong();
     }
 
     /**
      * Resolves the slot index for the given keyHash.
      *
-     * @param keyHash 64-bit non-zero hash
+     * @param keyHash 64-bit hash; zero is the empty-slot marker and is remapped
      * @param nowNanos current timestamp in nanoseconds
-     * @return slot index in range [0, capacity - 1]
+     * @return slot index in range [0, capacity - 1] owned by {@code keyHash}, or {@link #NO_SLOT}
+     *         when no slot in the probe window is free, reclaimable or already owned by this key
      */
     public int findOrAllocateSlot(long keyHash, long nowNanos) {
-        int baseSlot = (int) (keyHash ^ (keyHash >>> 32)) & mask;
+        if (keyHash == 0L) {
+            keyHash = Long.MIN_VALUE;
+        }
+        int baseSlot = (int) mix(keyHash ^ seed) & mask;
 
         for (int hop = 0; hop < MAX_PROBE_HOPS; hop++) {
             int slot = (baseSlot + hop) & mask;
@@ -69,8 +82,16 @@ public final class LockFreePrimitiveTable {
             }
         }
 
-        // Bounded fallback: overwrite the base slot to maintain constant time
-        return baseSlot;
+        return NO_SLOT;
+    }
+
+    private static long mix(long k) {
+        k ^= k >>> 33;
+        k *= 0xff51afd7ed558ccdL;
+        k ^= k >>> 33;
+        k *= 0xc4ceb9fe1a85ec53L;
+        k ^= k >>> 33;
+        return k;
     }
 
     public long getValue(int slot) {
