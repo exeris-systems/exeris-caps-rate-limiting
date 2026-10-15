@@ -85,12 +85,13 @@ S4. **The entitlement registration stays, and its id is the artifactId.** This i
 
 S5. **No dependency creep.** The runtime classpath stays what the POM declares:
     `exeris-sdk-annotations` at `provided` (every Exeris annotation is `@Retention(SOURCE)`), the
-    kernel dependencies `exeris-kernel-spi` and `exeris-kernel-core` (at the scope the POM gives the
-    SPI, `provided`), and the sibling capabilities the README lists; README `Depends on` lists what
-    the POM declares and moves with it. A new `compile`-scope dependency other than those, a logging
-    implementation such as Logback or Log4j (use `System.Logger`, ADR-060), or a new sibling
-    capability with no matching `@Requires` or README line → `[CONTRACT]`. Reading an Exeris
-    annotation at runtime → `[HARD BLOCK]`.
+    kernel dependency `exeris-kernel-spi` at `provided`, which is the one the POM declares
+    (`exeris-kernel-core` is permitted at the same scope when it is added), and the sibling
+    capabilities the README lists; README `Depends on` lists what the POM declares and moves with
+    it. A new `compile`-scope dependency other than those, a logging implementation such as Logback
+    or Log4j (use `System.Logger`, ADR-060), or a new sibling capability with no matching
+    `@Requires` or README line → `[CONTRACT]`. Reading an Exeris annotation at runtime →
+    `[HARD BLOCK]`.
 
 S6. **The build baseline and the test contract hold** (`AGENTS.md` §2, `CONTRIBUTING.md`).
     `maven.compiler.release` stays 25 and no `--enable-preview` appears in any scope →
@@ -114,7 +115,7 @@ S8. **The decision is transport-free; the admission filter is the one HTTP bindi
     response. An HTTP, header or status-code type reachable from the decision path, a type outside
     that binding that uses one, or a dependency on `exeris-kernel-spi` or `exeris-kernel-core`
     beyond the entitlement declaration and that binding (README: `provided` scope), or on any other
-    kernel artifact → `[HARD BLOCK]`.
+    kernel artifact outside `test` scope (the TCK at `test` is the permitted one) → `[HARD BLOCK]`.
 
 S9. **The evaluation path stays lock-free and allocation-free.** The `RateLimitPolicy` Javadoc
     requires thread safety, lock-free execution on the hot path and zero heap allocations per
