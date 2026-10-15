@@ -87,6 +87,22 @@ class TokenBucketLimiterTest {
     }
 
     @Test
+    @DisplayName("a full table is swept at most once per refill period")
+    void sweepRunsOncePerPeriod() {
+        TokenBucketLimiter limiter = limiter(2, 60, 2);
+        limiter.tryAcquire("a");
+        clock.addAndGet(10 * SECOND);
+        limiter.tryAcquire("b");
+        assertThat(limiter.tryAcquire("c").allowed()).as("first sweep finds nothing refilled").isFalse();
+
+        clock.addAndGet(55 * SECOND);
+        assertThat(limiter.tryAcquire("c").allowed()).as("a is refilled but the period's sweep is spent").isFalse();
+
+        clock.addAndGet(5 * SECOND);
+        assertThat(limiter.tryAcquire("c").allowed()).as("the next period sweeps").isTrue();
+    }
+
+    @Test
     @DisplayName("a full bucket starts its refill period when the first token leaves it")
     void fullBucketRefillStartsAtFirstTake() {
         TokenBucketLimiter.Bucket bucket = new TokenBucketLimiter.Bucket(5, 0);

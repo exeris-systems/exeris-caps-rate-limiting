@@ -13,6 +13,8 @@ package eu.exeris.caps.ratelimit.api;
 public interface AdmissionHostBinding {
 
     /**
+     * Names the host the limit is installed in.
+     *
      * @return the host's name, for diagnostics
      */
     String host();

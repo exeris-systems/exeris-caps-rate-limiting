@@ -46,6 +46,8 @@ public final class ClientAddressResolver {
     }
 
     /**
+     * Derives the bucket key of the request's client, so clients behind one /64 share a bucket.
+     *
      * @param exchange the request
      * @return the client key: an IPv4 address, an IPv6 /64 prefix, or {@link #UNKNOWN}
      */
@@ -54,6 +56,9 @@ public final class ClientAddressResolver {
     }
 
     /**
+     * Resolves the client address: the peer address, or, when the peer is a trusted proxy, the first
+     * untrusted hop of the selected forwarding header read from the right.
+     *
      * @param exchange the request
      * @return the client address, or empty when the host supplies no usable peer address
      */
