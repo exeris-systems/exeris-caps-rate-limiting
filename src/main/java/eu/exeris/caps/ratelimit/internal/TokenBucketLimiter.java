@@ -6,6 +6,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 /**
@@ -14,14 +15,15 @@ import java.util.function.LongSupplier;
  *
  * <p>Keys are compared exactly, never by hash, so two clients never share a bucket by collision. The
  * number of live buckets is bounded: when the table is full, buckets that have refilled completely are
- * dropped (dropping one changes nothing, since a new bucket starts full). If none can be dropped, a new
+ * dropped (dropping one changes nothing, since a new bucket starts full). The sweep runs at most once per
+ * refill period, because a bucket cannot become full sooner than one period after its last take. If none can be dropped, a new
  * key is refused rather than admitted unmetered, because these buckets guard credential endpoints where
  * failing open would remove the protection exactly when an attacker floods the table.
  *
  * <p>Known limits, both accepted:
  * <ul>
- *   <li>The eviction scan visits every bucket, so it costs O(maxKeys) when the table is full of buckets
- *       that have not yet refilled.</li>
+ *   <li>The eviction scan visits every bucket, so one sweep costs O(maxKeys); a flood of distinct keys
+ *       against a full table pays it once per refill period, and every other new key is refused at once.</li>
  *   <li>A bucket evicted between a {@code get} and the following {@code take} can lose that one token,
  *       after which the client holds a full bucket again. The effect is only ever to under-limit, and only
  *       for a bucket that was already full.</li>
@@ -36,6 +38,7 @@ public final class TokenBucketLimiter {
     private final int maxKeys;
     private final LongSupplier nanoClock;
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
+    private final AtomicLong lastSweepNanos;
 
     public TokenBucketLimiter(long capacity, long refillPeriodNanos, int maxKeys, LongSupplier nanoClock) {
         if (capacity <= 0 || refillPeriodNanos <= 0 || maxKeys <= 0) {
@@ -45,6 +48,8 @@ public final class TokenBucketLimiter {
         this.refillPeriodNanos = refillPeriodNanos;
         this.maxKeys = maxKeys;
         this.nanoClock = Objects.requireNonNull(nanoClock, "nanoClock");
+        // Start a period in the past so the first full table is swept at once.
+        this.lastSweepNanos = new AtomicLong(nanoClock.getAsLong() - refillPeriodNanos);
     }
 
     /**
@@ -58,7 +63,7 @@ public final class TokenBucketLimiter {
         Bucket bucket = buckets.get(key);
         if (bucket == null) {
             if (buckets.size() >= maxKeys) {
-                evictRefilled(now);
+                evictRefilledOncePerPeriod(now);
                 if (buckets.size() >= maxKeys) {
                     return RateLimitDecision.rejected(capacity, refillPeriodNanos);
                 }
@@ -68,9 +73,20 @@ public final class TokenBucketLimiter {
         return bucket.take(now, capacity, refillPeriodNanos);
     }
 
-    /** @return the number of live buckets */
+    /**
+     * Counts the buckets the table holds, which never exceeds the configured maximum.
+     *
+     * @return the number of live buckets
+     */
     public int size() {
         return buckets.size();
+    }
+
+    private void evictRefilledOncePerPeriod(long now) {
+        long last = lastSweepNanos.get();
+        if (now - last >= refillPeriodNanos && lastSweepNanos.compareAndSet(last, now)) {
+            evictRefilled(now);
+        }
     }
 
     private void evictRefilled(long now) {

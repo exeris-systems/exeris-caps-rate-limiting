@@ -23,7 +23,11 @@ public enum ForwardedHeader {
         this.headerName = headerName;
     }
 
-    /** @return the HTTP header name */
+    /**
+     * Names the header the trusted proxies write the client address into.
+     *
+     * @return the HTTP header name
+     */
     public String headerName() {
         return headerName;
     }

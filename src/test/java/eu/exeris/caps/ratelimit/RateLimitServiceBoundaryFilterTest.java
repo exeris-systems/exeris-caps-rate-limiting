@@ -153,6 +153,20 @@ class RateLimitServiceBoundaryFilterTest {
     }
 
     @Test
+    @DisplayName("a configured route is canonicalised: method upper-cased, trailing slash dropped")
+    void routesAreCanonicalised() {
+        RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
+                RateLimitFilterSettings.KEY_GROUPS, "a",
+                "exeris.caps.ratelimit.group.a.routes", "post /login/, Get  /me"));
+        assertThat(settings.groups().get(0).routes()).containsExactlyInAnyOrder("POST /login", "GET /me");
+        assertThatThrownBy(() -> RateLimitFilterSettings.fromProperties(Map.of(
+                RateLimitFilterSettings.KEY_GROUPS, "a,b",
+                "exeris.caps.ratelimit.group.a.routes", "POST /login",
+                "exeris.caps.ratelimit.group.b.routes", "post /login/")))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     @DisplayName("every unreadable setting surfaces as IllegalStateException")
     void settingsFailuresAreIllegalState() {
         for (String[] bad : new String[][] {

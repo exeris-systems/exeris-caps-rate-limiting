@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: exeris-caps-rate-limiting
 status: active
-last-verified: 2026-10-13
+last-verified: 2026-10-14
 ---
 
 # Review rules for `exeris-caps-rate-limiting`
@@ -100,7 +100,9 @@ S8. **The decision is transport-free; the admission filter is the one HTTP bindi
     `RequestFilterChain` filters on `exeris-caps-service-boundary-core` that answer the request
     themselves, so the Service Boundary admission filter (`RateLimitAdmissionFilter`) and the types it
     needs (`ProblemResponses`, `ClientAddressResolver`, `PeerAddressSource`, which exposes
-    `HttpExchange`) may use the kernel HTTP SPI types to read headers and build the 429 response.
+    `HttpExchange`, and `HeapLoanedBuffer`, which carries the 429 body as a kernel memory
+    `LoanedBuffer`) may use the kernel HTTP and memory SPI types to read headers and build the 429
+    response.
     An HTTP, header or status-code type reachable from the decision path, a type outside that binding
     that uses one, or a dependency on `exeris-kernel-spi` beyond the entitlement declaration and that
     binding (README: `provided` scope) → `[HARD BLOCK]`.

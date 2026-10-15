@@ -41,7 +41,10 @@ public final class RateLimitModule implements CapabilityLifecycleHooks {
     }
 
     /**
-     * @param binding where the limit is installed; null leaves the module unable to initialise
+     * Creates the module around the host binding that {@link #initialize()} attaches.
+     *
+     * @param binding where the limit is installed; null makes {@link #initialize()} throw
+     *                {@link IllegalStateException}
      */
     public RateLimitModule(AdmissionHostBinding binding) {
         this.binding = binding;
