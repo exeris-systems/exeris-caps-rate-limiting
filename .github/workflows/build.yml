@@ -34,16 +34,6 @@ jobs:
         with:
           path: exeris-caps-rate-limiting
 
-      # The SDK release matching exeris.sdk.version is not on Maven Central, so it is built from source
-      # at its release tag; an immutable ref keeps an unrelated upstream commit from turning this build
-      # red. The codegen chain (exeris-tooling) resolves from Maven Central under the eu.exeris group.
-      - name: Checkout exeris-sdk (v0.10.0 — matches exeris.sdk.version in the POM)
-        uses: actions/checkout@v7
-        with:
-          repository: exeris-systems/exeris-sdk
-          ref: v0.10.0
-          path: exeris-sdk
-
       - name: Set up JDK ${{ matrix.java }}
         uses: actions/setup-java@v6
         with:
@@ -57,12 +47,6 @@ jobs:
             echo "::error::PACKAGES_READ_TOKEN is not set, so exeris-kernel cannot be resolved from GitHub Packages"
             exit 1
           fi
-
-      # japicmp.skip: the SDK binds a semver gate to verify whose baseline is the previous release
-      # jar, which a runner cannot resolve. That gate belongs to the SDK's own CI.
-      - name: Install exeris-sdk to the local repository
-        working-directory: exeris-sdk
-        run: mvn -B -ntp -DskipTests -Djapicmp.skip=true install
 
       # Two passes, and the first is not redundant: exeris:generate runs at generate-sources, but the
       # processor writes the capability metadata it reads only during compile.

@@ -1,9 +1,9 @@
 version: 2
 
-# GitHub Actions and Maven, weekly. The eu.exeris pins are ignored: CI builds the SDK and the codegen
-# chain from the release tag that build.yml names, and sibling caps from their default branch, so a
-# bot PR moving one of those versions would propose something the build does not produce. They move
-# by a deliberate change to the POM and build.yml together.
+# GitHub Actions and Maven, weekly. The eu.exeris pins are ignored: the SDK, the codegen chain and
+# the kernel snapshot are one coordinated set, and sibling caps are taken from their default branch,
+# so a bot PR moving a single one of those versions would propose a combination nobody validated.
+# They move by a deliberate change to the POM.
 updates:
   - package-ecosystem: github-actions
     directory: /
