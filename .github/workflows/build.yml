@@ -34,23 +34,6 @@ jobs:
         with:
           path: exeris-caps-rate-limiting
 
-      # The SDK and the codegen chain are not published to a Maven repository, so both are built
-      # from source at the release tag matching the version in pom.xml. An immutable ref keeps an
-      # unrelated upstream commit from turning this build red.
-      - name: Checkout exeris-sdk (v0.10.0 — matches exeris.sdk.version in the POM)
-        uses: actions/checkout@v7
-        with:
-          repository: exeris-systems/exeris-sdk
-          ref: v0.10.0
-          path: exeris-sdk
-
-      - name: Checkout exeris-tooling (v0.7.0 — matches exeris.tooling.version in the POM)
-        uses: actions/checkout@v7
-        with:
-          repository: exeris-systems/exeris-tooling
-          ref: v0.7.0
-          path: exeris-tooling
-
       # service-boundary-core provides the RequestFilterChain the filter binds to. It has no release
       # yet, so a commit SHA is the immutable ref: a change on its main moves this build only when the
       # SHA is bumped here.
@@ -75,25 +58,11 @@ jobs:
             exit 1
           fi
 
-      # japicmp.skip: the SDK binds a semver gate to verify whose baseline is the previous release
-      # jar, which a runner cannot resolve. That gate belongs to the SDK's own CI.
-      - name: Install exeris-sdk to the local repository
-        working-directory: exeris-sdk
-        run: mvn -B -ntp -DskipTests -Djapicmp.skip=true install
-
-      # An allowlist, not the whole reactor: exeris-e2e-tests declares the kernel at test scope, and
-      # -am does not follow BOM imports, so exeris-tooling-bom is named explicitly.
-      - name: Install the codegen chain to the local repository
-        working-directory: exeris-tooling
-        run: mvn -B -ntp -DskipTests install -pl exeris-tooling-bom,exeris-processor,exeris-codegen-maven-plugin -am
-
-      # Built with this cap's SDK and tooling versions, so the runner needs only one of each. Its
-      # committed manifest is not regenerated here; its own CI owns that check.
+      # Built with the SDK and tooling versions its own POM declares, which resolve from Maven Central.
+      # Its committed manifest is not regenerated here; its own CI owns that check.
       - name: Install exeris-caps-service-boundary-core to the local repository
         working-directory: exeris-caps-service-boundary-core
-        run: >-
-          mvn -B -ntp -s .github/maven-settings.xml -DskipTests -Dexeris.codegen.skip=true
-          -Dexeris.sdk.version=0.10.0 -Dexeris.tooling.version=0.7.0 install
+        run: mvn -B -ntp -s .github/maven-settings.xml -DskipTests -Dexeris.codegen.skip=true install
 
       # Two passes, and the first is not redundant: exeris:generate runs at generate-sources, but the
       # processor writes the capability metadata it reads only during compile.
