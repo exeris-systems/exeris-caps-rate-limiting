@@ -33,6 +33,8 @@ public enum ForwardedHeader {
     }
 
     /**
+     * Returns the constant that names the given forwarding header, compared case-insensitively.
+     *
      * @param value a header name, case-insensitive: {@code x-forwarded-for} or {@code forwarded}
      * @return the matching constant
      * @throws IllegalArgumentException if the value names neither header
