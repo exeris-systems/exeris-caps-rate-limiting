@@ -28,6 +28,9 @@ public final class RateLimitServiceBoundaryBinding implements AdmissionHostBindi
     }
 
     /**
+     * Creates the binding that runs rate limiting on the given filter chain, measuring time with
+     * {@link System#nanoTime()}.
+     *
      * @param chain the Service Boundary filter chain
      * @param settings route groups, limits and trusted proxies
      * @param peerAddress the connection's peer address, from the transport

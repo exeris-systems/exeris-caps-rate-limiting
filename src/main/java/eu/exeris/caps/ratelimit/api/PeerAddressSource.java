@@ -19,6 +19,9 @@ public interface PeerAddressSource {
     PeerAddressSource NONE = exchange -> Optional.empty();
 
     /**
+     * Returns the IP address literal of the connection's peer, or empty when the transport does not
+     * know it.
+     *
      * @param exchange the request
      * @return the peer's IP address literal, or empty when it is not known
      */

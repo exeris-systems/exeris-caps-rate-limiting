@@ -42,6 +42,8 @@ public record Cidr(byte[] network, int prefixLength) {
     }
 
     /**
+     * Tests whether an address lies in this network; an address of the other IP family never does.
+     *
      * @param address address to test
      * @return whether the address lies in this network; an IPv4 address never matches an IPv6 network
      */
