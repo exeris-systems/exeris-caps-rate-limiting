@@ -33,7 +33,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
-        <exeris.sdk.version>0.10.0</exeris.sdk.version>
+        <exeris.sdk.version>0.12.0</exeris.sdk.version>
         <exeris.kernel.version>0.13.0-SNAPSHOT</exeris.kernel.version>
         <exeris.tooling.version>0.10.0</exeris.tooling.version>
         <junit.version>5.11.4</junit.version>
