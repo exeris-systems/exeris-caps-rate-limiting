@@ -10,9 +10,10 @@
 
     <name>Exeris Caps :: Rate Limiting Policy</name>
     <description>
-        Stateful rate-limiting policy capability. Provides zero-allocation, lock-free
-        token-bucket and GCRA rate-limiting primitives with bounded memory tables.
-        Owns no transport and binds to no host runtime.
+        Stateful rate-limiting policy capability: a GCRA rate-limit policy, and a Service Boundary
+        admission filter with per-client, per-route token buckets for credential endpoints.
+        The decision path is transport-free; the admission filter is the one HTTP binding, built on the
+        kernel HTTP SPI and the Service Boundary filter chain.
     </description>
     <url>https://github.com/exeris-systems/exeris-caps-rate-limiting</url>
     <inceptionYear>2026</inceptionYear>
@@ -36,6 +37,7 @@
         <exeris.sdk.version>0.10.0</exeris.sdk.version>
         <exeris.kernel.version>0.13.0-SNAPSHOT</exeris.kernel.version>
         <exeris.tooling.version>0.7.0</exeris.tooling.version>
+        <exeris.caps.service-boundary-core.version>0.1.0-SNAPSHOT</exeris.caps.service-boundary-core.version>
         <junit.version>5.11.4</junit.version>
         <assertj.version>3.27.7</assertj.version>
     </properties>
@@ -46,6 +48,22 @@
             <artifactId>exeris-sdk-annotations</artifactId>
             <version>${exeris.sdk.version}</version>
             <scope>provided</scope>
+        </dependency>
+        <!-- provided: the composition runtime that drives the lifecycle supplies these hooks -->
+        <dependency>
+            <groupId>eu.exeris</groupId>
+            <artifactId>exeris-sdk-composition-lifecycle</artifactId>
+            <version>${exeris.sdk.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- provided and optional: service-boundary-core is one of two admission hosts (ADR-099 obligation 4);
+             a composition that binds the filter chain supplies it -->
+        <dependency>
+            <groupId>eu.exeris.caps</groupId>
+            <artifactId>exeris-caps-service-boundary-core</artifactId>
+            <version>${exeris.caps.service-boundary-core.version}</version>
+            <scope>provided</scope>
+            <optional>true</optional>
         </dependency>
         <!-- provided: the kernel that hosts the cap supplies the SPI, and the jar keeps no runtime dependency -->
         <dependency>

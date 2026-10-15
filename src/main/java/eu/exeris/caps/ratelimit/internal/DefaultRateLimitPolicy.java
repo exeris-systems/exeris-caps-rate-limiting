@@ -3,6 +3,7 @@ package eu.exeris.caps.ratelimit.internal;
 import eu.exeris.caps.ratelimit.api.RateLimitDecision;
 import eu.exeris.caps.ratelimit.api.RateLimitPolicy;
 
+import java.security.SecureRandom;
 import java.util.Objects;
 import java.util.function.LongSupplier;
 
@@ -12,6 +13,9 @@ import java.util.function.LongSupplier;
  * <p>State per key is a single 64-bit timestamp (Theoretical Arrival Time, TAT).
  * Allowed requests require a single atomic CAS; throttled requests trigger zero CAS operations,
  * preserving CPU cache-line sharing under heavy contention.
+ *
+ * <p>The policy fails closed: a request is allowed only after its cost has been recorded, so a key
+ * that cannot be given a table slot, or whose update loses every compare-and-set attempt, is rejected.
  */
 public final class DefaultRateLimitPolicy implements RateLimitPolicy {
 
@@ -22,6 +26,7 @@ public final class DefaultRateLimitPolicy implements RateLimitPolicy {
     private final long burstCapacity;
     private final LockFreePrimitiveTable table;
     private final LongSupplier nanoClock;
+    private final long hashSeed = new SecureRandom().nextLong();
 
     public DefaultRateLimitPolicy(long emissionIntervalNanos, long burstCapacity, int maxKeys) {
         this(emissionIntervalNanos, burstCapacity, maxKeys, System::nanoTime);
@@ -44,6 +49,16 @@ public final class DefaultRateLimitPolicy implements RateLimitPolicy {
         this.table = new LockFreePrimitiveTable(maxKeys, maxIdleNanos);
     }
 
+    /** Test seam: the caller supplies the state table. */
+    DefaultRateLimitPolicy(long emissionIntervalNanos, long burstCapacity, LockFreePrimitiveTable table,
+                           LongSupplier nanoClock) {
+        this.emissionIntervalNanos = emissionIntervalNanos;
+        this.burstCapacity = burstCapacity;
+        this.burstToleranceNanos = burstCapacity * emissionIntervalNanos;
+        this.nanoClock = Objects.requireNonNull(nanoClock, "nanoClock");
+        this.table = Objects.requireNonNull(table, "table");
+    }
+
     @Override
     public RateLimitDecision evaluate(long keyHash, long cost) {
         if (cost <= 0) {
@@ -53,6 +68,10 @@ public final class DefaultRateLimitPolicy implements RateLimitPolicy {
         long now = nanoClock.getAsLong();
         long incrementNanos = cost * emissionIntervalNanos;
         int slot = table.findOrAllocateSlot(keyHash, now);
+        if (slot == LockFreePrimitiveTable.NO_SLOT) {
+            // No state can be held for this key: refuse rather than share another key's state.
+            return RateLimitDecision.rejected(burstCapacity, incrementNanos);
+        }
 
         for (int retry = 0; retry < MAX_CAS_RETRIES; retry++) {
             long currentTat = table.getValue(slot);
@@ -72,18 +91,14 @@ public final class DefaultRateLimitPolicy implements RateLimitPolicy {
             }
         }
 
-        // Heavy contention fallback: evaluate without mutation
-        long currentTat = table.getValue(slot);
-        long diff = Math.max(now, currentTat) + incrementNanos - now;
-        if (diff > burstToleranceNanos) {
-            return RateLimitDecision.rejected(burstCapacity, diff - burstToleranceNanos);
-        }
-        return RateLimitDecision.allowed(0L, burstCapacity, diff);
+        // Contention outlasted the retry budget. An allow is only ever returned together with the
+        // recorded update, so the request is refused.
+        return RateLimitDecision.rejected(burstCapacity, incrementNanos);
     }
 
     @Override
     public RateLimitDecision evaluate(CharSequence key, long cost) {
-        long hash = ZeroAllocHasher.hash(key);
+        long hash = ZeroAllocHasher.hash(key, hashSeed);
         return evaluate(hash, cost);
     }
 

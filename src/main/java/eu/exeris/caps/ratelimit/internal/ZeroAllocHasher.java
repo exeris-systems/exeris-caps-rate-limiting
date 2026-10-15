@@ -17,11 +17,20 @@ public final class ZeroAllocHasher {
      * Hashes a CharSequence without allocating String objects.
      */
     public static long hash(CharSequence cs) {
+        return hash(cs, 0L);
+    }
+
+    /**
+     * Hashes a CharSequence under a caller-held secret seed, so the hash of a given input is not
+     * reproducible by a party that does not know the seed.
+     */
+    public static long hash(CharSequence cs, long seed) {
         if (cs == null || cs.isEmpty()) {
-            return SEED;
+            long empty = fmix64(SEED ^ seed);
+            return empty == 0L ? 1L : empty;
         }
 
-        long h = SEED ^ cs.length();
+        long h = SEED ^ fmix64(seed) ^ cs.length();
         int len = cs.length();
         for (int i = 0; i < len; i++) {
             h ^= cs.charAt(i);
