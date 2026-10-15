@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: exeris-caps-rate-limiting
 status: active
-last-verified: 2026-10-14
+last-verified: 2026-10-15
 ---
 
 # Review rules for `exeris-caps-rate-limiting`
@@ -30,19 +30,26 @@ capability's surfaces and invariants its own documents promise, and that is what
 ## Step S — rules of this repository
 
 S1. **The cap-tier Wall holds** (ADR-055, ADR-006; `AGENTS.md` §2). Only what the build's Wall check
-    enforces is asserted here: the check is `CapTierWall` in `exeris-tooling`, run by
-    `exeris:verify-capabilities` at `process-classes` over the compiled main classes, and it rejects
-    a reference to `org.springframework.*`, `io.netty.*`, `reactor.*` or `jakarta.servlet.*`, to
-    kernel internals (`eu.exeris.kernel.**.internal.**`), and to a sibling capability's `internal`
-    package; only `eu.exeris.kernel.spi.*` is the kernel this capability may name. In a diff: such
-    an import in `src/main`; a dependency in `pom.xml` that brings one in; a rename of the package
-    root `eu.exeris.caps.ratelimit` or an extra segment in it, because the guard derives the
-    capability's name from the segment after `eu.exeris.caps.`; `eu.exeris.caps.ratelimit.internal`
-    is private to this capability and `eu.exeris.caps.ratelimit.api` is the cross-cap surface, and
-    an `internal` type in a public signature → `[HARD BLOCK]`. A Spring, servlet, Netty or reactor
-    import in `src/test` is outside what the guard scans and is still forbidden by `AGENTS.md` →
-    `[CONTRACT]`. A `kernel-core` or `kernel-community` dependency outside `test` scope →
-    `[HARD BLOCK]`.
+    enforces is asserted as the build's: the check is `CapTierWall` in `exeris-tooling`, run by
+    `exeris:verify-capabilities` at `process-classes` over the compiled main classes
+    (`exeris-codegen-core/src/main/java/eu/exeris/tooling/codegen/core/capability/CapTierWall.java:76-80`
+    and `:285-294` at `v0.10.0`, commit `50aa920`). It rejects a reference to
+    `org.springframework.*`, `io.netty.*`, `reactor.*` or `jakarta.servlet.*`, to a kernel package
+    with an `internal` segment (`eu.exeris.kernel.**.internal.**`), and to a sibling capability's
+    `internal` package. It inspects no other kernel package, so the public (non-`internal`) packages
+    of `exeris-kernel-spi` and `exeris-kernel-core` are the kernel this capability may name. It does
+    not reject the driver packages `eu.exeris.kernel.community.*` and
+    `eu.exeris.kernel.enterprise.*`; the reviewer holds that line. In a diff: such an import in
+    `src/main`; a dependency in `pom.xml` that brings one in; a rename of the package root
+    `eu.exeris.caps.ratelimit` or an extra segment in it, because the guard derives the capability's
+    name from the segment after `eu.exeris.caps.`; `eu.exeris.caps.ratelimit.internal` is private to
+    this capability and `eu.exeris.caps.ratelimit.api` is the cross-cap surface, and an `internal`
+    type in a public signature → `[HARD BLOCK]`. A Spring, servlet, Netty or reactor import in
+    `src/test` is outside what the guard scans and is still forbidden by `AGENTS.md` → `[CONTRACT]`.
+    A kernel driver dependency outside `test` scope, or a driver package imported in `src/main` →
+    `[HARD BLOCK]`: the driver is chosen by the SKU, never by a capability. The drivers are
+    `eu.exeris:exeris-kernel-community`, `eu.exeris:exeris-kernel-community-kafka` and
+    `eu.exeris:exeris-kernel-enterprise`, as the two kernel BOMs list them.
 
 S2. **The committed manifest is regenerated, never edited.**
     `src/main/generated/java/cap-manifest.json` is written by `exeris:generate`, and a clean
@@ -78,10 +85,13 @@ S4. **The entitlement registration stays, and its id is the artifactId.** This i
 
 S5. **No dependency creep.** The runtime classpath stays what the POM declares:
     `exeris-sdk-annotations` at `provided` (every Exeris annotation is `@Retention(SOURCE)`), the
-    kernel SPI, and the sibling capabilities the README lists. A new `compile`-scope dependency, a
-    logging implementation such as Logback or Log4j (use `System.Logger`, ADR-060), or a new sibling
-    capability with no matching `@Requires` or README line → `[CONTRACT]`. Reading an Exeris
-    annotation at runtime → `[HARD BLOCK]`.
+    kernel dependency `exeris-kernel-spi` at `provided`, which is the one the POM declares
+    (`exeris-kernel-core` is permitted at the same scope when it is added), and the sibling
+    capabilities the README lists; README `Depends on` lists what the POM declares and moves with
+    it. A new `compile`-scope dependency other than those, a logging implementation such as Logback
+    or Log4j (use `System.Logger`, ADR-060), or a new sibling capability with no matching
+    `@Requires` or README line → `[CONTRACT]`. Reading an Exeris annotation at runtime →
+    `[HARD BLOCK]`.
 
 S6. **The build baseline and the test contract hold** (`AGENTS.md` §2, `CONTRIBUTING.md`).
     `maven.compiler.release` stays 25 and no `--enable-preview` appears in any scope →
@@ -98,14 +108,14 @@ S8. **The decision is transport-free; the admission filter is the one HTTP bindi
     `RateLimitPolicy`, `RateLimitDecision`, `DefaultRateLimitPolicy` and the table behind them know
     no HTTP, header or status-code type. ADR-099 obligation 4 makes the policy caps bind as
     `RequestFilterChain` filters on `exeris-caps-service-boundary-core` that answer the request
-    themselves, so the Service Boundary admission filter (`RateLimitAdmissionFilter`) and the types it
-    needs (`ProblemResponses`, `ClientAddressResolver`, `PeerAddressSource`, which exposes
+    themselves, so the Service Boundary admission filter (`RateLimitAdmissionFilter`) and the types
+    it needs (`ProblemResponses`, `ClientAddressResolver`, `PeerAddressSource`, which exposes
     `HttpExchange`, and `HeapLoanedBuffer`, which carries the 429 body as a kernel memory
     `LoanedBuffer`) may use the kernel HTTP and memory SPI types to read headers and build the 429
-    response.
-    An HTTP, header or status-code type reachable from the decision path, a type outside that binding
-    that uses one, or a dependency on `exeris-kernel-spi` beyond the entitlement declaration and that
-    binding (README: `provided` scope) → `[HARD BLOCK]`.
+    response. An HTTP, header or status-code type reachable from the decision path, a type outside
+    that binding that uses one, or a dependency on `exeris-kernel-spi` or `exeris-kernel-core`
+    beyond the entitlement declaration and that binding (README: `provided` scope), or on any other
+    kernel artifact outside `test` scope (the TCK at `test` is the permitted one) → `[HARD BLOCK]`.
 
 S9. **The evaluation path stays lock-free and allocation-free.** The `RateLimitPolicy` Javadoc
     requires thread safety, lock-free execution on the hot path and zero heap allocations per
