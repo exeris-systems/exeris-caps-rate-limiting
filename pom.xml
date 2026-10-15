@@ -35,7 +35,7 @@
         <maven.compiler.release>25</maven.compiler.release>
         <exeris.sdk.version>0.10.0</exeris.sdk.version>
         <exeris.kernel.version>0.13.0-SNAPSHOT</exeris.kernel.version>
-        <exeris.tooling.version>0.7.0</exeris.tooling.version>
+        <exeris.tooling.version>0.10.0</exeris.tooling.version>
         <junit.version>5.11.4</junit.version>
         <assertj.version>3.27.7</assertj.version>
     </properties>
@@ -85,7 +85,7 @@
                     <release>${maven.compiler.release}</release>
                     <annotationProcessorPaths>
                         <path>
-                            <groupId>eu.exeris.tooling</groupId>
+                            <groupId>eu.exeris</groupId>
                             <artifactId>exeris-processor</artifactId>
                             <version>${exeris.tooling.version}</version>
                         </path>
@@ -94,7 +94,7 @@
             </plugin>
 
             <plugin>
-                <groupId>eu.exeris.tooling</groupId>
+                <groupId>eu.exeris</groupId>
                 <artifactId>exeris-codegen-maven-plugin</artifactId>
                 <version>${exeris.tooling.version}</version>
                 <executions>
