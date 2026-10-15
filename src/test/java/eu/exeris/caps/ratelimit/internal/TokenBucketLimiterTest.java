@@ -4,6 +4,13 @@ import eu.exeris.caps.ratelimit.api.RateLimitDecision;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -84,6 +91,43 @@ class TokenBucketLimiterTest {
         clock.addAndGet(60 * SECOND);
         assertThat(limiter.tryAcquire("c").allowed()).isTrue();
         assertThat(limiter.size()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("concurrent new keys never hold more buckets than the configured maximum")
+    void concurrentNewKeysRespectTheBound() throws Exception {
+        int maxKeys = 8;
+        int threads = 16;
+        int keysPerThread = 500;
+        TokenBucketLimiter limiter = limiter(1, 60, maxKeys);
+        AtomicInteger admittedNewKeys = new AtomicInteger();
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<?>> done = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                int thread = t;
+                done.add(pool.submit(() -> {
+                    start.await();
+                    for (int i = 0; i < keysPerThread; i++) {
+                        if (limiter.tryAcquire(thread + ":" + i).allowed()) {
+                            admittedNewKeys.incrementAndGet();
+                        }
+                        assertThat(limiter.size()).isLessThanOrEqualTo(maxKeys);
+                    }
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (Future<?> f : done) {
+                f.get();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(limiter.size()).isEqualTo(maxKeys);
+        assertThat(admittedNewKeys.get()).as("no bucket refills, so only maxKeys keys get one").isEqualTo(maxKeys);
     }
 
     @Test

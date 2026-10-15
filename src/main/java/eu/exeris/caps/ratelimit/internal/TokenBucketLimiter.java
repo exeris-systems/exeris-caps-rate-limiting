@@ -2,10 +2,10 @@ package eu.exeris.caps.ratelimit.internal;
 
 import eu.exeris.caps.ratelimit.api.RateLimitDecision;
 
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
@@ -14,7 +14,8 @@ import java.util.function.LongSupplier;
  * {@code refillPeriodNanos}.
  *
  * <p>Keys are compared exactly, never by hash, so two clients never share a bucket by collision. The
- * number of live buckets is bounded: when the table is full, buckets that have refilled completely are
+ * number of live buckets never exceeds {@code maxKeys}: a new key reserves its place in a counter before
+ * its bucket is inserted, so concurrent new keys cannot overshoot the bound. When the table is full, buckets that have refilled completely are
  * dropped (dropping one changes nothing, since a new bucket starts full). The sweep runs at most once per
  * refill period, because a bucket cannot become full sooner than one period after its last take. If none can be dropped, a new
  * key is refused rather than admitted unmetered, because these buckets guard credential endpoints where
@@ -38,6 +39,7 @@ public final class TokenBucketLimiter {
     private final int maxKeys;
     private final LongSupplier nanoClock;
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
+    private final AtomicInteger live = new AtomicInteger();
     private final AtomicLong lastSweepNanos;
 
     public TokenBucketLimiter(long capacity, long refillPeriodNanos, int maxKeys, LongSupplier nanoClock) {
@@ -62,13 +64,21 @@ public final class TokenBucketLimiter {
         long now = nanoClock.getAsLong();
         Bucket bucket = buckets.get(key);
         if (bucket == null) {
-            if (buckets.size() >= maxKeys) {
+            if (!reserveSlot()) {
                 evictRefilledOncePerPeriod(now);
-                if (buckets.size() >= maxKeys) {
+                if (!reserveSlot()) {
                     return RateLimitDecision.rejected(capacity, refillPeriodNanos);
                 }
             }
-            bucket = buckets.computeIfAbsent(key, k -> new Bucket(capacity, now));
+            Bucket fresh = new Bucket(capacity, now);
+            Bucket prior = buckets.putIfAbsent(key, fresh);
+            if (prior == null) {
+                bucket = fresh;
+            } else {
+                // Another thread inserted this key first; its reservation holds the place.
+                live.decrementAndGet();
+                bucket = prior;
+            }
         }
         return bucket.take(now, capacity, refillPeriodNanos);
     }
@@ -82,6 +92,18 @@ public final class TokenBucketLimiter {
         return buckets.size();
     }
 
+    private boolean reserveSlot() {
+        while (true) {
+            int current = live.get();
+            if (current >= maxKeys) {
+                return false;
+            }
+            if (live.compareAndSet(current, current + 1)) {
+                return true;
+            }
+        }
+    }
+
     private void evictRefilledOncePerPeriod(long now) {
         long last = lastSweepNanos.get();
         if (now - last >= refillPeriodNanos && lastSweepNanos.compareAndSet(last, now)) {
@@ -90,9 +112,10 @@ public final class TokenBucketLimiter {
     }
 
     private void evictRefilled(long now) {
-        for (Iterator<Bucket> it = buckets.values().iterator(); it.hasNext(); ) {
-            if (it.next().isFull(now, capacity, refillPeriodNanos)) {
-                it.remove();
+        for (Map.Entry<String, Bucket> entry : buckets.entrySet()) {
+            if (entry.getValue().isFull(now, capacity, refillPeriodNanos)
+                    && buckets.remove(entry.getKey(), entry.getValue())) {
+                live.decrementAndGet();
             }
         }
     }
