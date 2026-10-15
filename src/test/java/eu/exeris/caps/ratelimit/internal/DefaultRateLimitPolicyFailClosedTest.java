@@ -46,6 +46,42 @@ class DefaultRateLimitPolicyFailClosedTest {
     }
 
     @Test
+    @DisplayName("Concurrent first requests for fresh keys never record fewer allows than were granted")
+    void freshKeysNeverGrantMoreThanBurst() throws Exception {
+        int keys = 2000;
+        int threads = 8;
+        DefaultRateLimitPolicy policy = new DefaultRateLimitPolicy(INTERVAL, 1, 8192, () -> 1_000_000_000L);
+        AtomicInteger[] allowed = new AtomicInteger[keys];
+        for (int k = 0; k < keys; k++) {
+            allowed[k] = new AtomicInteger();
+        }
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        for (int t = 0; t < threads; t++) {
+            pool.execute(() -> {
+                try {
+                    start.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                for (int k = 0; k < keys; k++) {
+                    if (policy.evaluate(k + 1L, 1).allowed()) {
+                        allowed[k].incrementAndGet();
+                    }
+                }
+            });
+        }
+        start.countDown();
+        pool.shutdown();
+        assertThat(pool.awaitTermination(60, TimeUnit.SECONDS)).isTrue();
+
+        for (int k = 0; k < keys; k++) {
+            assertThat(allowed[k].get()).as("key %d", k + 1).isLessThanOrEqualTo(1);
+        }
+    }
+
+    @Test
     @DisplayName("Under contention allowed requests never exceed the recorded burst")
     void allowedNeverExceedsBurstUnderContention() throws Exception {
         int burst = 50;

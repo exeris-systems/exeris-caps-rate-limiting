@@ -70,7 +70,7 @@ class LockFreePrimitiveTableTest {
     @Test
     @DisplayName("Distinct keys never share a slot")
     void distinctKeysNeverShareSlot() {
-        LockFreePrimitiveTable table = new LockFreePrimitiveTable(4096, 10_000_000_000L);
+        LockFreePrimitiveTable table = new LockFreePrimitiveTable(4096, 10_000_000_000L, 0x1234_5678_9abc_def0L);
         long now = 1_000_000_000L;
         java.util.Map<Integer, Long> bySlot = new java.util.HashMap<>();
         for (long k = 1; k <= 1500; k++) {

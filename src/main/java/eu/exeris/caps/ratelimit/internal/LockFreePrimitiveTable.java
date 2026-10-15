@@ -28,13 +28,18 @@ public class LockFreePrimitiveTable {
     private final long seed;
 
     public LockFreePrimitiveTable(int initialCapacity, long maxIdleNanos) {
+        this(initialCapacity, maxIdleNanos, new SecureRandom().nextLong());
+    }
+
+    /** Test seam: the caller fixes the placement seed, which makes slot placement reproducible. */
+    LockFreePrimitiveTable(int initialCapacity, long maxIdleNanos, long seed) {
         int cap = Math.max(16, roundToPowerOfTwo(initialCapacity));
         this.capacity = cap;
         this.mask = cap - 1;
         this.keys = new AtomicLongArray(cap);
         this.values = new AtomicLongArray(cap);
         this.maxIdleNanos = Math.max(1_000_000_000L, maxIdleNanos); // at least 1s
-        this.seed = new SecureRandom().nextLong();
+        this.seed = seed;
     }
 
     /**
@@ -53,6 +58,11 @@ public class LockFreePrimitiveTable {
 
         for (int hop = 0; hop < MAX_PROBE_HOPS; hop++) {
             int slot = (baseSlot + hop) & mask;
+            // The value is read before the key and refreshed from that observation, before the key is
+            // published: a concurrent update by the slot's current user makes the refresh fail instead
+            // of being overwritten, and a slot never carries its new key with the previous key's stale
+            // value.
+            long observed = values.get(slot);
             long existingKey = keys.get(slot);
 
             if (existingKey == keyHash) {
@@ -60,24 +70,14 @@ public class LockFreePrimitiveTable {
             }
 
             if (existingKey == 0L) {
-                if (keys.compareAndSet(slot, 0L, keyHash)) {
-                    values.set(slot, nowNanos);
+                values.compareAndSet(slot, observed, nowNanos);
+                if (keys.compareAndSet(slot, 0L, keyHash) || keys.get(slot) == keyHash) {
                     return slot;
                 }
-                if (keys.get(slot) == keyHash) {
+            } else if (nowNanos - observed > maxIdleNanos && values.compareAndSet(slot, observed, nowNanos)) {
+                // The slot was idle when its value was refreshed; take it over.
+                if (keys.compareAndSet(slot, existingKey, keyHash) || keys.get(slot) == keyHash) {
                     return slot;
-                }
-            } else {
-                // Check if existing slot is dead and eligible for reclamation
-                long tat = values.get(slot);
-                if (nowNanos - tat > maxIdleNanos) {
-                    if (keys.compareAndSet(slot, existingKey, keyHash)) {
-                        values.set(slot, nowNanos);
-                        return slot;
-                    }
-                    if (keys.get(slot) == keyHash) {
-                        return slot;
-                    }
                 }
             }
         }
