@@ -44,7 +44,7 @@ class RateLimitServiceBoundaryFilterTest {
                 "exeris.caps.ratelimit.group.password-reset.capacity", "1",
                 RateLimitFilterSettings.KEY_TRUSTED_PROXIES, "10.0.0.0/8"));
         // The test transport reports the peer in a header that only the test sets.
-        module = new RateLimitModule(RateLimitServiceBoundaryBinding.of(sbc.requestFilterChain(), settings,
+        module = new RateLimitModule(RateLimitServiceBoundaryBinding.of(registry, settings,
                 exchange -> exchange.request().firstHeader(PEER_HEADER), clock::get));
         module.initialize();
         for (String path : List.of("/login", "/password/reset-request", "/password/reset", "/health")) {
@@ -55,6 +55,7 @@ class RateLimitServiceBoundaryFilterTest {
                     .handler(ex -> ex.respond(HttpStatus.OK))
                     .build());
         }
+        module.ready();
     }
 
     private RecordingExchange post(String path, String peer, HttpHeader... extra) {
@@ -210,10 +211,12 @@ class RateLimitServiceBoundaryFilterTest {
                 RateLimitFilterSettings.KEY_GROUPS, "login",
                 "exeris.caps.ratelimit.group.login.routes", "POST /login",
                 "exeris.caps.ratelimit.group.login.capacity", "1"));
-        new RateLimitModule(RateLimitServiceBoundaryBinding.of(sbc.requestFilterChain(), settings,
-                exchange -> Optional.empty(), clock::get)).initialize();
+        RateLimitModule testModule = new RateLimitModule(RateLimitServiceBoundaryBinding.of(sbc.apiSurfaceRegistry(), settings,
+                exchange -> Optional.empty(), clock::get));
+        testModule.initialize();
         sbc.apiSurfaceRegistry().registerRoute(ApiSurfaceRoute.builder().method(HttpMethod.POST).pathPattern("/login")
                 .actionName("login").handler(ex -> ex.respond(HttpStatus.OK)).build());
+        testModule.ready();
 
         RecordingExchange first = new RecordingExchange(HttpMethod.POST, "/login", List.of());
         RecordingExchange second = new RecordingExchange(HttpMethod.POST, "/login", List.of(new HttpHeader("X-Forwarded-For", "198.51.100.3")));
@@ -221,5 +224,126 @@ class RateLimitServiceBoundaryFilterTest {
         sbc.apiSurfaceRegistry().handle(second);
         assertThat(first.status).isEqualTo(HttpStatus.OK);
         assertThat(second.status).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    @Test
+    @DisplayName("a matching route passes validation at ready()")
+    void matchingRoutePassesValidation() {
+        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
+        RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
+                RateLimitFilterSettings.KEY_GROUPS, "login",
+                "exeris.caps.ratelimit.group.login.routes", "POST /auth/login",
+                "exeris.caps.ratelimit.group.login.capacity", "2"));
+        RateLimitModule mod = new RateLimitModule(RateLimitServiceBoundaryBinding.of(reg, settings,
+                exchange -> Optional.of("192.0.2.1")));
+        mod.initialize();
+        reg.registerRoute(ApiSurfaceRoute.builder()
+                .method(HttpMethod.POST)
+                .pathPattern("/auth/login")
+                .actionName("login")
+                .handler(ex -> ex.respond(HttpStatus.OK))
+                .build());
+        mod.ready();
+    }
+
+    @Test
+    @DisplayName("a typo in a configured route fails at ready() naming the undeclared route")
+    void typoInConfiguredRouteFailsAtReady() {
+        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
+        RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
+                RateLimitFilterSettings.KEY_GROUPS, "login",
+                "exeris.caps.ratelimit.group.login.routes", "POST /auth/logni",
+                "exeris.caps.ratelimit.group.login.capacity", "2"));
+        RateLimitModule mod = new RateLimitModule(RateLimitServiceBoundaryBinding.of(reg, settings,
+                exchange -> Optional.of("192.0.2.1")));
+        mod.initialize();
+        reg.registerRoute(ApiSurfaceRoute.builder()
+                .method(HttpMethod.POST)
+                .pathPattern("/auth/login")
+                .actionName("login")
+                .handler(ex -> ex.respond(HttpStatus.OK))
+                .build());
+        assertThatThrownBy(mod::ready)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("POST /auth/logni");
+    }
+
+    @Test
+    @DisplayName("a differently written template fails at ready() naming the undeclared route")
+    void differentlyWrittenTemplateFailsAtReady() {
+        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
+        RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
+                RateLimitFilterSettings.KEY_GROUPS, "reset",
+                "exeris.caps.ratelimit.group.reset.routes", "POST /auth/reset/{userId}",
+                "exeris.caps.ratelimit.group.reset.capacity", "2"));
+        RateLimitModule mod = new RateLimitModule(RateLimitServiceBoundaryBinding.of(reg, settings,
+                exchange -> Optional.of("192.0.2.1")));
+        mod.initialize();
+        reg.registerRoute(ApiSurfaceRoute.builder()
+                .method(HttpMethod.POST)
+                .pathPattern("/auth/reset/{id}")
+                .actionName("reset")
+                .handler(ex -> ex.respond(HttpStatus.OK))
+                .build());
+        assertThatThrownBy(mod::ready)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("POST /auth/reset/{userId}");
+    }
+
+    @Test
+    @DisplayName("a route registered after the filter passes validation at ready()")
+    void routeRegisteredAfterFilterPassesAtReady() {
+        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
+        RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
+                RateLimitFilterSettings.KEY_GROUPS, "verify",
+                "exeris.caps.ratelimit.group.verify.routes", "POST /auth/verify",
+                "exeris.caps.ratelimit.group.verify.capacity", "1"));
+        RateLimitModule mod = new RateLimitModule(RateLimitServiceBoundaryBinding.of(reg, settings,
+                exchange -> Optional.of("192.0.2.1")));
+        // Filter is attached first during initialize()
+        mod.initialize();
+        assertThat(reg.filters()).hasSize(1);
+
+        // Route is registered after the filter
+        reg.registerRoute(ApiSurfaceRoute.builder()
+                .method(HttpMethod.POST)
+                .pathPattern("/auth/verify")
+                .actionName("verify")
+                .handler(ex -> ex.respond(HttpStatus.OK))
+                .build());
+
+        // ready() runs after route registration and succeeds
+        mod.ready();
+
+        RecordingExchange exchange = new RecordingExchange(HttpMethod.POST, "/auth/verify", List.of());
+        reg.handle(exchange);
+        assertThat(exchange.status).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    @DisplayName("an undeclared route halts admission with 500 if ready() was not called before serving a request")
+    void undeclaredRouteFailsBeforeFirstRequest() {
+        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
+        RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
+                RateLimitFilterSettings.KEY_GROUPS, "login",
+                "exeris.caps.ratelimit.group.login.routes", "POST /auth/typo",
+                "exeris.caps.ratelimit.group.login.capacity", "2"));
+        RateLimitModule mod = new RateLimitModule(RateLimitServiceBoundaryBinding.of(reg, settings,
+                exchange -> Optional.of("192.0.2.1")));
+        mod.initialize();
+        reg.registerRoute(ApiSurfaceRoute.builder()
+                .method(HttpMethod.POST)
+                .pathPattern("/auth/login")
+                .actionName("login")
+                .handler(ex -> ex.respond(HttpStatus.OK))
+                .build());
+        RecordingExchange exchange = new RecordingExchange(HttpMethod.POST, "/auth/login", List.of());
+        reg.handle(exchange);
+        assertThat(exchange.status).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
     }
 }

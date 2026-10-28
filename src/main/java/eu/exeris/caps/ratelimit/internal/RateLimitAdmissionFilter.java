@@ -43,8 +43,15 @@ public final class RateLimitAdmissionFilter implements AdmissionFilter {
 
     private final Map<String, TokenBucketLimiter> limiterByRoute;
     private final ClientAddressResolver addresses;
+    private final Runnable routeValidator;
 
     public RateLimitAdmissionFilter(RateLimitFilterSettings settings, PeerAddressSource peerAddress, LongSupplier nanoClock) {
+        this(settings, peerAddress, nanoClock, null);
+    }
+
+    public RateLimitAdmissionFilter(RateLimitFilterSettings settings, PeerAddressSource peerAddress,
+                                    LongSupplier nanoClock, Runnable routeValidator) {
+        this.routeValidator = routeValidator;
         List<Cidr> trusted = new ArrayList<>();
         for (String cidr : settings.trustedProxies()) {
             trusted.add(Cidr.parse(cidr));
@@ -73,6 +80,9 @@ public final class RateLimitAdmissionFilter implements AdmissionFilter {
 
     @Override
     public boolean filter(HttpExchange exchange, RouteMatch routeMatch) {
+        if (routeValidator != null) {
+            routeValidator.run();
+        }
         String route = routeMatch.route().method().name() + " " + routeMatch.route().pathPattern();
         TokenBucketLimiter limiter = limiterByRoute.get(route);
         if (limiter == null) {
