@@ -1,5 +1,6 @@
 package eu.exeris.caps.ratelimit;
 
+import eu.exeris.kernel.spi.contract.EntitlementClass;
 import eu.exeris.kernel.spi.contract.EntitlementRequirement;
 
 import java.util.Set;
@@ -32,5 +33,10 @@ public final class RateLimitEntitlement implements EntitlementRequirement {
     @Override
     public Set<String> requiredCapabilities() {
         return REQUIRED;
+    }
+
+    @Override
+    public EntitlementClass entitlementClass() {
+        return EntitlementClass.COMMERCIAL;
     }
 }

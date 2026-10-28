@@ -4,7 +4,7 @@ type: roadmap
 visibility: public
 owning-repo: exeris-caps-rate-limiting
 status: active
-last-verified: 2026-10-15
+last-verified: 2026-10-28
 ---
 
 # exeris-caps-rate-limiting — Roadmap
@@ -19,9 +19,7 @@ An item under **Before 0.1.0** has a tracking issue in the `0.1.0` milestone, so
 
 ## Before 0.1.0
 
-### A configured route that no registered route declares is never limited
-
-Tracked in [#11](https://github.com/exeris-systems/exeris-caps-rate-limiting/issues/11). The filter builds its table from the configured `METHOD /path/{template}` strings and looks a request up by the matched route's method and path pattern; a route that is not in the table passes untouched. A typo in a group's `routes`, a renamed route or a template written differently from the registered pattern leaves a credential route without a limit, while the module initialises and reports a live limit. The binding receives only a `RequestFilterChain`, which does not list routes, so it cannot compare. Closing the gap means the binding takes the registered routes from `ApiSurfaceRegistry` and refuses to start, naming the route, when a configured route is not among them. Code: `src/main/java/eu/exeris/caps/ratelimit/internal/RateLimitAdmissionFilter.java`, `src/main/java/eu/exeris/caps/ratelimit/api/RateLimitServiceBoundaryBinding.java`.
+None: all gaps blocking 0.1.0 are closed.
 
 ---
 

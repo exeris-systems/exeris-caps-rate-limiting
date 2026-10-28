@@ -60,9 +60,21 @@ public final class RateLimitModule implements CapabilityLifecycleHooks {
         binding.attach();
     }
 
+    /**
+     * Verifies that the admission host is ready to serve requests under this module's limits.
+     *
+     * <p>Route validation runs here rather than at {@link #initialize()} because routes may be
+     * registered during other capability modules' initialization or after this module initializes.
+     * Running the check at {@code ready()} ensures all routes across the composition are declared
+     * while still failing before the first request is served.
+     *
+     * @throws IllegalStateException if a configured route is not declared by any registered route
+     */
     @Override
     public void ready() {
-        // The limit is live from initialize(); nothing further to do.
+        if (binding != null) {
+            binding.ready();
+        }
     }
 
     @Override
