@@ -2,7 +2,7 @@
 
 Per-key request rate limiting as an Exeris capability. It provides `RateLimitPolicy`, a decision function that answers whether a request identified by a key (a `CharSequence` or a precomputed `long` hash) may proceed at a given cost, using the Generic Cell Rate Algorithm over a fixed-capacity, in-process table. It also provides the Service Boundary admission filter that meters credential routes — login, register, password reset, email verification, token refresh — per client and route. `RateLimitPolicy` is transport-free; only the Service Boundary admission filter (ADR-099 obligation 4) touches HTTP, building the 429 response through the kernel HTTP SPI types.
 
-Status: proof of concept, built against `exeris-kernel` 0.13.0-SNAPSHOT. The API is not stable and no artefact has been published.
+Status: proof of concept, built against `exeris-kernel` 0.13.0. The API is not stable and no artefact has been published.
 
 ## Where it sits
 
@@ -52,7 +52,7 @@ mvn verify                               # pass 2 — generate cap-manifest.json
 
 Both passes are needed after a `clean`: `exeris:generate` runs before `compile`, and `compile` is when the processor writes the metadata it reads. `src/main/generated/java/cap-manifest.json` is committed, so a clean `git status` after `mvn verify` shows the manifest matches the declaration.
 
-`exeris-tooling` 0.10.0 and `exeris-sdk` 0.12.0 resolve from Maven Central under the `eu.exeris` group. `exeris-caps-service-boundary-core` is built from a pinned commit, and `exeris-kernel` 0.13.0-SNAPSHOT is resolved from GitHub Packages, which needs a token with `read:packages`. [`.github/workflows/build.yml`](.github/workflows/build.yml) is the exact sequence, and [`.github/maven-settings.xml`](.github/maven-settings.xml) the repository configuration it uses.
+`exeris-tooling` 0.10.0 and `exeris-sdk` 0.12.0 resolve from Maven Central under the `eu.exeris` group. `exeris-caps-service-boundary-core` is built from a pinned commit, and `exeris-kernel` 0.13.0 is resolved from GitHub Packages, which needs a token with `read:packages`. [`.github/workflows/build.yml`](.github/workflows/build.yml) is the exact sequence, and [`.github/maven-settings.xml`](.github/maven-settings.xml) the repository configuration it uses.
 
 ## Documentation
 
