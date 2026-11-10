@@ -110,9 +110,9 @@ S8. **The decision is transport-free; the admission filter is the one HTTP bindi
     `RequestFilterChain` filters on `exeris-caps-service-boundary-core` that answer the request
     themselves, so the Service Boundary admission filter (`RateLimitAdmissionFilter`) and the types
     it needs (`ProblemResponses`, `ClientAddressResolver`, `PeerAddressSource`, which exposes
-    `HttpExchange`, and `HeapLoanedBuffer`, which carries the 429 body as a kernel memory
-    `LoanedBuffer`) may use the kernel HTTP and memory SPI types to read headers and build the 429
-    response. An HTTP, header or status-code type reachable from the decision path, a type outside
+    `HttpExchange`) may use the kernel HTTP and memory SPI types to read headers and write the 429
+    response body into a buffer from the kernel allocator. An HTTP, header or status-code type
+    reachable from the decision path, a type outside
     that binding that uses one, or a dependency on `exeris-kernel-spi` or `exeris-kernel-core`
     beyond the entitlement declaration and that binding (README: `provided` scope), or on any other
     kernel artifact outside `test` scope (the TCK at `test` is the permitted one) → `[HARD BLOCK]`.
