@@ -37,11 +37,11 @@ jobs:
       # service-boundary-core provides the RequestFilterChain the filter binds to. It has no release
       # yet, so a commit SHA is the immutable ref: a change on its main moves this build only when the
       # SHA is bumped here.
-      - name: Checkout exeris-caps-service-boundary-core (dd26c9a)
+      - name: Checkout exeris-caps-service-boundary-core (d2ef07b)
         uses: actions/checkout@v7
         with:
           repository: exeris-systems/exeris-caps-service-boundary-core
-          ref: dd26c9acfaefaf025d482af8c592acffad49ecf3
+          ref: d2ef07b59ba2340c5a2dfd7112b9c46890d7085b
           path: exeris-caps-service-boundary-core
 
       - name: Set up JDK ${{ matrix.java }}
