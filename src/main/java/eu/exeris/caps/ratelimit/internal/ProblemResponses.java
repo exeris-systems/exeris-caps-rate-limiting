@@ -61,6 +61,17 @@ public final class ProblemResponses {
     private ProblemResponses() {
     }
 
+    /** Number of cached bodies, the value {@link #MAX_CACHED_BODIES} is enforced against. */
+    static int cachedBodyCount() {
+        return CACHED.get();
+    }
+
+    /** Whether a body for this status and detail is retained in the cache. */
+    static boolean isCached(HttpStatus status, String detail) {
+        Map<String, byte[]> byDetail = BODIES.get(status);
+        return byDetail != null && byDetail.containsKey(detail);
+    }
+
     private static byte[] encode(HttpStatus status, String detail) {
         return ("{\"type\":\"about:blank\",\"title\":\"" + status.reasonPhrase()
                 + "\",\"status\":" + status.code() + ",\"detail\":\"" + detail + "\"}")
