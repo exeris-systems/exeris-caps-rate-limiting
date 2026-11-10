@@ -3,12 +3,19 @@ package eu.exeris.caps.ratelimit;
 import eu.exeris.caps.ratelimit.api.RateLimitFilterSettings;
 import eu.exeris.caps.ratelimit.api.RateLimitServiceBoundaryBinding;
 import eu.exeris.caps.ratelimit.internal.RecordingExchange;
+import eu.exeris.caps.ratelimit.internal.TrackingAllocator;
 import eu.exeris.caps.serviceboundarycore.ServiceBoundaryCoreModule;
 import eu.exeris.caps.serviceboundarycore.api.ApiSurfaceRegistry;
 import eu.exeris.caps.serviceboundarycore.api.ApiSurfaceRoute;
+import eu.exeris.kernel.spi.context.KernelProviders;
 import eu.exeris.kernel.spi.http.HttpHeader;
 import eu.exeris.kernel.spi.http.HttpMethod;
 import eu.exeris.kernel.spi.http.HttpStatus;
+import eu.exeris.kernel.spi.http.HttpVersion;
+import eu.exeris.kernel.spi.memory.MemoryAllocator;
+import eu.exeris.kernel.spi.memory.MemoryProvider;
+import eu.exeris.kernel.spi.memory.MemoryProviderConfig;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +25,7 @@ import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -33,9 +41,14 @@ class RateLimitServiceBoundaryFilterTest {
     private final AtomicLong clock = new AtomicLong(0);
     private ApiSurfaceRegistry registry;
     private RateLimitModule module;
+    private MemoryAllocator base;
+    private TrackingAllocator allocator;
 
     @BeforeEach
     void setUp() {
+        base = ServiceLoader.load(MemoryProvider.class).findFirst().orElseThrow()
+                .createAllocator(MemoryProviderConfig.defaults());
+        allocator = new TrackingAllocator(base);
         ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
         registry = sbc.apiSurfaceRegistry();
         RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
@@ -61,12 +74,73 @@ class RateLimitServiceBoundaryFilterTest {
         module.ready();
     }
 
+    @AfterEach
+    void closeAllocator() {
+        base.close();
+    }
+
     private RecordingExchange post(String path, String peer, HttpHeader... extra) {
+        return post(path, peer, HttpVersion.HTTP_1_1, RecordingExchange.Mode.ACCEPT_NOW, extra);
+    }
+
+    private RecordingExchange post(String path, String peer, HttpVersion version, RecordingExchange.Mode mode,
+                                   HttpHeader... extra) {
         List<HttpHeader> headers = new java.util.ArrayList<>(List.of(extra));
         headers.add(new HttpHeader(PEER_HEADER, peer));
-        RecordingExchange exchange = new RecordingExchange(HttpMethod.POST, path, headers);
-        registry.handle(exchange);
+        RecordingExchange exchange = new RecordingExchange(HttpMethod.POST, path, version, headers, mode);
+        java.lang.ScopedValue.where(KernelProviders.MEMORY_ALLOCATOR, allocator).run(() -> registry.handle(exchange));
         return exchange;
+    }
+
+    @Test
+    @DisplayName("each throttled request takes one kernel buffer sized to the body, and it is released once")
+    void throttledResponsesUseKernelBuffers() {
+        post("/password/reset", "203.0.113.7");
+        assertThat(allocator.allocations()).isZero();
+        for (int i = 0; i < 5; i++) {
+            RecordingExchange throttled = post("/password/reset", "203.0.113.7");
+            assertThat(throttled.status).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+            assertThat(throttled.response.body()).isSameAs(allocator.buffers.get(i));
+            assertThat(allocator.requested.get(i).longValue()).isEqualTo(throttled.bodySizeAtRespond);
+            assertThat(allocator.buffers.get(i).closeCalls.get()).isEqualTo(1);
+        }
+        assertThat(allocator.allocations()).isEqualTo(5);
+        assertThat(allocator.outstanding()).isZero();
+    }
+
+    @Test
+    @DisplayName("an HTTP/2 request is answered on HTTP/2 and the body outlives the admission call")
+    void http2LifetimeThroughTheHost() {
+        post("/password/reset", "203.0.113.7");
+        RecordingExchange throttled = post("/password/reset", "203.0.113.7", HttpVersion.HTTP_2,
+                RecordingExchange.Mode.ACCEPT_DEFERRED);
+        assertThat(throttled.response.version()).isEqualTo(HttpVersion.HTTP_2);
+        assertThat(throttled.refCountAtRespond).isEqualTo(1);
+        assertThat(allocator.buffers.get(0).isAlive()).isTrue();
+        assertThat(allocator.buffers.get(0).closeCalls.get()).isZero();
+        throttled.completeDeferred();
+        assertThat(allocator.outstanding()).isZero();
+    }
+
+    @Test
+    @DisplayName("allowed requests allocate nothing")
+    void allowedRequestsAllocateNothing() {
+        long before = base.stats().allocationCount();
+        assertThat(post("/login", "203.0.113.7").status).isEqualTo(HttpStatus.OK);
+        assertThat(post("/health", "203.0.113.7").status).isEqualTo(HttpStatus.OK);
+        assertThat(base.stats().allocationCount()).isEqualTo(before);
+    }
+
+    @Test
+    @DisplayName("a throttled request on a thread with no allocator bound is answered 429 without a body")
+    void unboundThread() {
+        post("/password/reset", "203.0.113.7");
+        RecordingExchange exchange = new RecordingExchange(HttpMethod.POST, "/password/reset",
+                List.of(new HttpHeader(PEER_HEADER, "203.0.113.7")));
+        registry.handle(exchange);
+        assertThat(exchange.status).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(exchange.response.body()).isNull();
+        assertThat(exchange.header("Retry-After")).isPresent();
     }
 
     @Test
