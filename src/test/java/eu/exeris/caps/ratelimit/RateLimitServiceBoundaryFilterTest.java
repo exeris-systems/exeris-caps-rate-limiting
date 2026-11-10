@@ -13,9 +13,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -345,5 +348,48 @@ class RateLimitServiceBoundaryFilterTest {
         RecordingExchange exchange = new RecordingExchange(HttpMethod.POST, "/auth/login", List.of());
         reg.handle(exchange);
         assertThat(exchange.status).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    @Test
+    @DisplayName("a request before ready() under a valid configuration is admitted and validates the routes once")
+    void validConfigurationAdmitsRequestBeforeReady() {
+        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ApiSurfaceRegistry real = sbc.apiSurfaceRegistry();
+        AtomicInteger routeReads = new AtomicInteger();
+        ApiSurfaceRegistry counting = (ApiSurfaceRegistry) Proxy.newProxyInstance(
+                ApiSurfaceRegistry.class.getClassLoader(), new Class<?>[] {ApiSurfaceRegistry.class},
+                (proxy, method, args) -> {
+                    if (method.getName().equals("routes") && method.getParameterCount() == 0) {
+                        routeReads.incrementAndGet();
+                    }
+                    try {
+                        return method.invoke(real, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
+                RateLimitFilterSettings.KEY_GROUPS, "login",
+                "exeris.caps.ratelimit.group.login.routes", "POST /auth/login",
+                "exeris.caps.ratelimit.group.login.capacity", "5"));
+        RateLimitModule mod = new RateLimitModule(RateLimitServiceBoundaryBinding.of(counting, settings,
+                exchange -> Optional.of("192.0.2.1")));
+        mod.initialize();
+        real.registerRoute(ApiSurfaceRoute.builder()
+                .method(HttpMethod.POST)
+                .pathPattern("/auth/login")
+                .actionName("login")
+                .handler(ex -> ex.respond(HttpStatus.OK))
+                .build());
+
+        RecordingExchange first = new RecordingExchange(HttpMethod.POST, "/auth/login", List.of());
+        real.handle(first);
+        RecordingExchange second = new RecordingExchange(HttpMethod.POST, "/auth/login", List.of());
+        real.handle(second);
+        mod.ready();
+
+        assertThat(first.status).isEqualTo(HttpStatus.OK);
+        assertThat(second.status).isEqualTo(HttpStatus.OK);
+        assertThat(routeReads.get()).isEqualTo(1);
     }
 }

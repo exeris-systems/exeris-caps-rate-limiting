@@ -4,7 +4,7 @@ type: roadmap
 visibility: public
 owning-repo: exeris-caps-rate-limiting
 status: active
-last-verified: 2026-10-28
+last-verified: 2026-11-10
 ---
 
 # exeris-caps-rate-limiting — Roadmap

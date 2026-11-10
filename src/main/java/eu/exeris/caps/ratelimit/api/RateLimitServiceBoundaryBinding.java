@@ -125,9 +125,7 @@ public final class RateLimitServiceBoundaryBinding implements AdmissionHostBindi
 
     @Override
     public void ready() {
-        if (routeValidator != null) {
-            routeValidator.run();
-        }
+        routeValidator.run();
     }
 
     @Override
