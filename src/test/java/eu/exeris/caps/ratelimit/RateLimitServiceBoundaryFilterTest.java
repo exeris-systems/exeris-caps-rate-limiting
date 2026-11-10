@@ -93,7 +93,7 @@ class RateLimitServiceBoundaryFilterTest {
     }
 
     @Test
-    @DisplayName("each throttled request takes one kernel buffer sized to the body, and it is released once")
+    @DisplayName("each throttled request takes one kernel buffer chosen by hint, and it is released once")
     void throttledResponsesUseKernelBuffers() {
         post("/password/reset", "203.0.113.7");
         assertThat(allocator.allocations()).isZero();
@@ -101,7 +101,8 @@ class RateLimitServiceBoundaryFilterTest {
             RecordingExchange throttled = post("/password/reset", "203.0.113.7");
             assertThat(throttled.status).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
             assertThat(throttled.response.body()).isSameAs(allocator.buffers.get(i));
-            assertThat(allocator.requested.get(i).longValue()).isEqualTo(throttled.bodySizeAtRespond);
+            assertThat(allocator.hints.get(i)).isEqualTo(eu.exeris.kernel.spi.memory.AllocationHint.MICRO);
+            assertThat(throttled.bodySizeAtRespond).isLessThanOrEqualTo(allocator.hints.get(i).sizeBytes());
             assertThat(allocator.buffers.get(i).closeCalls.get()).isEqualTo(1);
         }
         assertThat(allocator.allocations()).isEqualTo(5);

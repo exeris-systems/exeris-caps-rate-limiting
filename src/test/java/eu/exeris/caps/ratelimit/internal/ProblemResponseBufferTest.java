@@ -5,6 +5,7 @@ import eu.exeris.kernel.spi.http.HttpHeader;
 import eu.exeris.kernel.spi.http.HttpMethod;
 import eu.exeris.kernel.spi.http.HttpStatus;
 import eu.exeris.kernel.spi.http.HttpVersion;
+import eu.exeris.kernel.spi.memory.AllocationHint;
 import eu.exeris.kernel.spi.memory.LeakDetectionMode;
 import eu.exeris.kernel.spi.memory.MemoryAllocator;
 import eu.exeris.kernel.spi.memory.MemoryProvider;
@@ -44,6 +45,17 @@ class ProblemResponseBufferTest {
     private static String expected(HttpStatus status, String detail) {
         return "{\"type\":\"about:blank\",\"title\":\"" + status.reasonPhrase() + "\",\"status\":" + status.code()
                 + ",\"detail\":\"" + detail + "\"}";
+    }
+
+    /** The smallest of the hints a body may use whose size holds {@code length}, from the SPI's own sizes. */
+    static AllocationHint smallestHint(int length) {
+        for (AllocationHint hint : List.of(AllocationHint.MICRO, AllocationHint.SMALL, AllocationHint.MEDIUM,
+                AllocationHint.STREAMING_CHUNK, AllocationHint.NETWORK_FRAME, AllocationHint.JUMBO)) {
+            if (hint.sizeBytes() >= length) {
+                return hint;
+            }
+        }
+        throw new IllegalArgumentException("no hint holds " + length);
     }
 
     private static RecordingExchange exchange(HttpVersion version, RecordingExchange.Mode mode) {
@@ -87,7 +99,7 @@ class ProblemResponseBufferTest {
         byte[] want = expected(HttpStatus.TOO_MANY_REQUESTS, detail).getBytes(StandardCharsets.UTF_8);
         assertThat(want.length).isGreaterThan(expected(HttpStatus.TOO_MANY_REQUESTS, detail).length());
         assertThat(exchange.bodyBytes).isEqualTo(want);
-        assertThat(allocator.requested).containsExactly(want.length);
+        assertThat(allocator.hints).containsExactly(smallestHint(want.length));
     }
 
     @Test
@@ -112,13 +124,14 @@ class ProblemResponseBufferTest {
     // 4, 5: kernel buffers only; released once on success
 
     @Test
-    @DisplayName("one kernel allocation per response, sized to the body, handed over as the body and released once")
+    @DisplayName("one kernel allocation per response, by hint, handed over as the body and released once")
     void oneAllocationReleasedOnce() {
         TrackingAllocator allocator = new TrackingAllocator(base);
         RecordingExchange exchange = exchange(HttpVersion.HTTP_1_1, RecordingExchange.Mode.ACCEPT_NOW);
         send(allocator, exchange);
         assertThat(allocator.allocations()).isEqualTo(1);
-        assertThat(allocator.requested).containsExactly((int) exchange.bodySizeAtRespond);
+        assertThat(allocator.hints).containsExactly(smallestHint((int) exchange.bodySizeAtRespond));
+        assertThat(allocator.networkCalls.get()).isZero();
         assertThat(exchange.response.body()).isSameAs(allocator.buffers.get(0));
         assertThat(allocator.finalReleases.get()).isEqualTo(1);
         assertThat(allocator.outstanding()).isZero();
@@ -126,13 +139,16 @@ class ProblemResponseBufferTest {
     }
 
     @Test
-    @DisplayName("a buffer exactly as large as the body is enough")
-    void capacityAtTheEstimate() {
+    @DisplayName("the buffer's size is the body length while its capacity is larger")
+    void sizeIsBodyLengthCapacityIsLarger() {
         TrackingAllocator allocator = new TrackingAllocator(base);
         RecordingExchange exchange = exchange(HttpVersion.HTTP_1_1, RecordingExchange.Mode.ACCEPT_NOW);
         send(allocator, exchange);
-        assertThat(allocator.buffers.get(0).capacity()).isGreaterThanOrEqualTo(exchange.bodySizeAtRespond);
-        assertThat(exchange.bodySizeAtRespond).isEqualTo(allocator.requested.get(0).longValue());
+        int length = expected(HttpStatus.TOO_MANY_REQUESTS, DETAIL).getBytes(StandardCharsets.UTF_8).length;
+        assertThat(exchange.bodySizeAtRespond).isEqualTo(length);
+        assertThat(allocator.buffers.get(0).size()).isEqualTo(length);
+        assertThat(allocator.buffers.get(0).capacity()).isGreaterThanOrEqualTo(allocator.hints.get(0).sizeBytes());
+        assertThat(allocator.buffers.get(0).capacity()).isGreaterThan(length);
     }
 
     // 6, 7: respond rejects, respond fails after taking ownership
@@ -163,9 +179,9 @@ class ProblemResponseBufferTest {
     // 8: failures before respond
 
     @Test
-    @DisplayName("a buffer that reports less capacity than requested is released once and respond is never reached")
-    void capacityBelowTheEstimate() {
-        TrackingAllocator allocator = new TrackingAllocator(base, 1);
+    @DisplayName("a buffer that reports less capacity than the body is released once and respond is never reached")
+    void capacityBelowTheBody() {
+        TrackingAllocator allocator = TrackingAllocator.reportingCapacity(base, 10);
         RecordingExchange exchange = exchange(HttpVersion.HTTP_1_1, RecordingExchange.Mode.ACCEPT_NOW);
         assertThatThrownBy(() -> send(allocator, exchange)).isInstanceOf(IllegalStateException.class);
         assertThat(exchange.respondCalls).isZero();

@@ -11,26 +11,44 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Wraps a real allocator and counts what it hands out: allocations, requested sizes, final releases,
+ * Wraps a real allocator and counts what it hands out: allocations, requested hints, final releases,
  * and every {@code close()} call per buffer (the kernel's close is idempotent, so only a wrapper can see
- * a redundant one).
+ * a redundant one). Only {@code allocate(AllocationHint)} is served; every other entry point fails the
+ * calling test, because a response body is allocated by hint. Optionally the whole capacity of every
+ * buffer is pre-filled with a non-zero pattern, so a write that relies on zeroed memory is visible.
  */
 public final class TrackingAllocator implements MemoryAllocator {
 
     private final MemoryAllocator delegate;
-    private final int capacityShortfall;
+    private final long reportedCapacity;
+    private final int prefill;
     public final List<CountingBuffer> buffers = new ArrayList<>();
-    public final List<Integer> requested = new ArrayList<>();
+    public final List<AllocationHint> hints = new ArrayList<>();
+    public final AtomicInteger networkCalls = new AtomicInteger();
     public final AtomicInteger finalReleases = new AtomicInteger();
 
     public TrackingAllocator(MemoryAllocator delegate) {
-        this(delegate, 0);
+        this(delegate, -1L, -1);
     }
 
-    /** @param capacityShortfall bytes by which every returned buffer reports less capacity than requested */
-    public TrackingAllocator(MemoryAllocator delegate, int capacityShortfall) {
+    /**
+     * @param reportedCapacity capacity every returned buffer reports, or a negative value for the real one
+     * @param prefill byte written over the whole real capacity of every buffer, or a negative value for none
+     */
+    private TrackingAllocator(MemoryAllocator delegate, long reportedCapacity, int prefill) {
         this.delegate = delegate;
-        this.capacityShortfall = capacityShortfall;
+        this.reportedCapacity = reportedCapacity;
+        this.prefill = prefill;
+    }
+
+    /** Every returned buffer reports {@code capacity} instead of its real capacity. */
+    public static TrackingAllocator reportingCapacity(MemoryAllocator delegate, long capacity) {
+        return new TrackingAllocator(delegate, capacity, -1);
+    }
+
+    /** Every returned buffer has its whole capacity filled with {@code pattern} before it is handed out. */
+    public static TrackingAllocator prefilled(MemoryAllocator delegate, byte pattern) {
+        return new TrackingAllocator(delegate, -1L, pattern & 0xFF);
     }
 
     public int allocations() {
@@ -43,27 +61,32 @@ public final class TrackingAllocator implements MemoryAllocator {
 
     @Override
     public LoanedBuffer allocateNetwork(int estimatedBytes) {
-        requested.add(estimatedBytes);
-        LoanedBuffer real = delegate.allocateNetwork(estimatedBytes);
-        CountingBuffer counted = new CountingBuffer(real, capacityShortfall == 0 ? -1 : estimatedBytes - capacityShortfall);
+        networkCalls.incrementAndGet();
+        throw new AssertionError("a response body must be allocated by hint, not with allocateNetwork("
+                + estimatedBytes + ")");
+    }
+
+    @Override
+    public LoanedBuffer allocate(AllocationHint hint) {
+        hints.add(hint);
+        LoanedBuffer real = delegate.allocate(hint);
+        if (prefill >= 0) {
+            real.segment().asSlice(0, real.capacity()).fill((byte) prefill);
+        }
+        CountingBuffer counted = new CountingBuffer(real, reportedCapacity);
         real.addCloseAction(finalReleases::incrementAndGet);
         buffers.add(counted);
         return counted;
     }
 
     @Override
-    public LoanedBuffer allocate(AllocationHint hint) {
-        throw new AssertionError("responses must be allocated with allocateNetwork");
-    }
-
-    @Override
     public LoanedBuffer allocateCarrierSlab(int bytes) {
-        throw new AssertionError("responses must be allocated with allocateNetwork");
+        throw new AssertionError("responses must be allocated by hint");
     }
 
     @Override
     public LoanedBuffer allocateInfrastructure(long bytes) {
-        throw new AssertionError("responses must be allocated with allocateNetwork");
+        throw new AssertionError("responses must be allocated by hint");
     }
 
     @Override
