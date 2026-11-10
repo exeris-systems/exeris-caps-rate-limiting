@@ -19,6 +19,7 @@ import java.util.RandomAccess;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Writes RFC 9457 problem responses ({@code application/problem+json}).
@@ -38,22 +39,50 @@ public final class ProblemResponses {
     private static final HttpHeader CACHE_CONTROL = new HttpHeader("Cache-Control", "no-store");
     private static final HttpHeader CONTENT_TYPE = new HttpHeader("Content-Type", "application/problem+json");
 
-    /** Encoded bodies per status and detail; the text is fixed, so each is encoded once. */
+    /**
+     * Upper bound on the number of cached bodies, counted over all statuses. A body for a detail that
+     * does not fit is encoded per response and not retained, so the cache never grows past this bound
+     * regardless of the detail text. Insertion uses {@code putIfAbsent} after a plain read of the count,
+     * so concurrent inserters may overshoot the bound by at most the number of concurrent callers.
+     */
+    static final int MAX_CACHED_BODIES = 256;
+
+    /** Encoded bodies per status and detail. Cached arrays are read-only and never leave this class. */
     private static final Map<HttpStatus, Map<String, byte[]>> BODIES = new ConcurrentHashMap<>();
+    private static final AtomicInteger CACHED = new AtomicInteger();
 
     private ProblemResponses() {
+    }
+
+    private static byte[] encode(HttpStatus status, String detail) {
+        return ("{\"type\":\"about:blank\",\"title\":\"" + status.reasonPhrase()
+                + "\",\"status\":" + status.code() + ",\"detail\":\"" + detail + "\"}")
+                .getBytes(StandardCharsets.UTF_8);
     }
 
     private static byte[] bodyFor(HttpStatus status, String detail) {
         Map<String, byte[]> byDetail = BODIES.get(status);
         if (byDetail == null) {
-            byDetail = BODIES.computeIfAbsent(status, k -> new ConcurrentHashMap<>());
+            if (CACHED.get() >= MAX_CACHED_BODIES) {
+                return encode(status, detail);
+            }
+            Map<String, byte[]> fresh = new ConcurrentHashMap<>();
+            byDetail = BODIES.putIfAbsent(status, fresh);
+            if (byDetail == null) {
+                byDetail = fresh;
+            }
         }
         byte[] bytes = byDetail.get(detail);
         if (bytes == null) {
-            String body = "{\"type\":\"about:blank\",\"title\":\"" + status.reasonPhrase()
-                    + "\",\"status\":" + status.code() + ",\"detail\":\"" + detail + "\"}";
-            bytes = byDetail.computeIfAbsent(detail, k -> body.getBytes(StandardCharsets.UTF_8));
+            bytes = encode(status, detail);
+            if (CACHED.get() < MAX_CACHED_BODIES) {
+                byte[] raced = byDetail.putIfAbsent(detail, bytes);
+                if (raced == null) {
+                    CACHED.incrementAndGet();
+                } else {
+                    bytes = raced;
+                }
+            }
         }
         return bytes;
     }
