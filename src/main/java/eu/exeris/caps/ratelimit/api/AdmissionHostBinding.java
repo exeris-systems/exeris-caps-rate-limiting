@@ -26,7 +26,8 @@ public interface AdmissionHostBinding {
      * Validates that the host is ready to serve requests under this binding.
      *
      * <p>Called during the {@code ready()} phase of the capability lifecycle, after all modules
-     * have initialized and registered their routes, but before the first request is served.
+     * have initialized and registered their routes. A request may be served before this call; a
+     * binding that needs the check to hold for such a request applies it on the request path too.
      *
      * @throws IllegalStateException if configured limits cannot be verified against the host
      * @since 0.1.0

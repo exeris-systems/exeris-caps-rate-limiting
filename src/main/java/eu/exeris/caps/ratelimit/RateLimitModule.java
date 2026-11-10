@@ -67,8 +67,9 @@ public final class RateLimitModule implements CapabilityLifecycleHooks {
      *
      * <p>Route validation runs here rather than at {@link #initialize()} because routes may be
      * registered during other capability modules' initialization or after this module initializes.
-     * Running the check at {@code ready()} ensures all routes across the composition are declared
-     * while still failing before the first request is served.
+     * Running the check at {@code ready()} sees every route the composition declares. The filter is
+     * attached at {@code initialize()}, so a request can arrive earlier; the filter runs the same
+     * check on such a request and refuses it while a configured route is undeclared.
      *
      * @throws IllegalStateException if a configured route is not declared by any registered route
      */
