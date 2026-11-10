@@ -6,6 +6,7 @@ import eu.exeris.kernel.spi.http.HttpResponse;
 import eu.exeris.kernel.spi.http.HttpStatus;
 import eu.exeris.kernel.spi.http.HttpVersion;
 import eu.exeris.kernel.spi.context.KernelProviders;
+import eu.exeris.kernel.spi.memory.AllocationHint;
 import eu.exeris.kernel.spi.memory.LoanedBuffer;
 import eu.exeris.kernel.spi.memory.MemoryAllocator;
 
@@ -32,6 +33,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * once; after a normal return the engine owns it and this class never touches it again. When no
  * allocator is bound the response is sent without a body.
  *
+ * <p>The buffer comes from {@code allocate(AllocationHint)} with the smallest hint whose
+ * {@code sizeBytes()} holds the body; no byte size is passed to the allocator. Every body this class
+ * writes is fixed capability text plus a status line, far below {@link AllocationHint#JUMBO}, so a body
+ * that exceeds the largest hint is a caller error and is rejected with {@link IllegalArgumentException}
+ * before any allocation. The buffer capacity may exceed the body; only {@code size()} bytes are sent and
+ * no write relies on the buffer content being zeroed.
+ *
  * @since 0.1.0
  */
 public final class ProblemResponses {
@@ -41,9 +49,8 @@ public final class ProblemResponses {
 
     /**
      * Upper bound on the number of cached bodies, counted over all statuses. A body for a detail that
-     * does not fit is encoded per response and not retained, so the cache never grows past this bound
-     * regardless of the detail text. Insertion uses {@code putIfAbsent} after a plain read of the count,
-     * so concurrent inserters may overshoot the bound by at most the number of concurrent callers.
+     * does not fit is encoded per response and not retained. The count is read before the insert, so the
+     * bound can be exceeded by at most the number of concurrent callers.
      */
     static final int MAX_CACHED_BODIES = 256;
 
@@ -85,6 +92,34 @@ public final class ProblemResponses {
             }
         }
         return bytes;
+    }
+
+    /**
+     * Smallest hint whose size holds {@code length} bytes.
+     *
+     * @throws IllegalArgumentException when {@code length} exceeds {@link AllocationHint#JUMBO}
+     */
+    static AllocationHint hintFor(int length) {
+        if (length <= AllocationHint.MICRO.sizeBytes()) {
+            return AllocationHint.MICRO;
+        }
+        if (length <= AllocationHint.SMALL.sizeBytes()) {
+            return AllocationHint.SMALL;
+        }
+        if (length <= AllocationHint.MEDIUM.sizeBytes()) {
+            return AllocationHint.MEDIUM;
+        }
+        if (length <= AllocationHint.STREAMING_CHUNK.sizeBytes()) {
+            return AllocationHint.STREAMING_CHUNK;
+        }
+        if (length <= AllocationHint.NETWORK_FRAME.sizeBytes()) {
+            return AllocationHint.NETWORK_FRAME;
+        }
+        if (length <= AllocationHint.JUMBO.sizeBytes()) {
+            return AllocationHint.JUMBO;
+        }
+        throw new IllegalArgumentException("problem body of " + length + " bytes exceeds "
+                + AllocationHint.JUMBO.sizeBytes() + " bytes");
     }
 
     private static List<HttpHeader> headers(boolean withContentType, List<HttpHeader> extra) {
@@ -143,8 +178,9 @@ public final class ProblemResponses {
             exchange.respond(HttpResponse.noBody(status, version, headers(false, headers)));
             return;
         }
+        AllocationHint hint = hintFor(bytes.length);
         MemoryAllocator allocator = KernelProviders.MEMORY_ALLOCATOR.get();
-        LoanedBuffer buffer = allocator.allocateNetwork(bytes.length);
+        LoanedBuffer buffer = allocator.allocate(hint);
         boolean handedOver = false;
         try {
             if (buffer.capacity() < bytes.length) {
