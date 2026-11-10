@@ -25,6 +25,11 @@ import java.util.function.LongSupplier;
  * and the matched route; the request body is never read. A request over its limit is answered 429 with
  * {@code Retry-After} and a problem body. Routes outside every group pass untouched.
  *
+ * <p>When it is built with a route validator, every request runs the validator until it has succeeded
+ * once. A configured route that no registered route declares makes the validator throw
+ * {@link IllegalStateException}, which the host answers as a server error: a misconfigured limit refuses
+ * traffic instead of leaving its route unmetered. After the first success the request path reads one flag.
+ *
  * <p>This is the only part of the capability that touches HTTP types (ADR-099 obligation 4: the policy
  * caps bind as {@code RequestFilterChain} filters and answer the request themselves). It meters with a
  * {@link TokenBucketLimiter} rather than a {@link eu.exeris.caps.ratelimit.api.RateLimitPolicy}: the
@@ -43,8 +48,15 @@ public final class RateLimitAdmissionFilter implements AdmissionFilter {
 
     private final Map<String, TokenBucketLimiter> limiterByRoute;
     private final ClientAddressResolver addresses;
+    private final Runnable routeValidator;
 
     public RateLimitAdmissionFilter(RateLimitFilterSettings settings, PeerAddressSource peerAddress, LongSupplier nanoClock) {
+        this(settings, peerAddress, nanoClock, null);
+    }
+
+    public RateLimitAdmissionFilter(RateLimitFilterSettings settings, PeerAddressSource peerAddress,
+                                    LongSupplier nanoClock, Runnable routeValidator) {
+        this.routeValidator = routeValidator;
         List<Cidr> trusted = new ArrayList<>();
         for (String cidr : settings.trustedProxies()) {
             trusted.add(Cidr.parse(cidr));
@@ -73,6 +85,9 @@ public final class RateLimitAdmissionFilter implements AdmissionFilter {
 
     @Override
     public boolean filter(HttpExchange exchange, RouteMatch routeMatch) {
+        if (routeValidator != null) {
+            routeValidator.run();
+        }
         String route = routeMatch.route().method().name() + " " + routeMatch.route().pathPattern();
         TokenBucketLimiter limiter = limiterByRoute.get(route);
         if (limiter == null) {

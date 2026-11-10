@@ -2,6 +2,7 @@ package eu.exeris.caps.ratelimit;
 
 import eu.exeris.caps.ratelimit.api.AdmissionHostBinding;
 import eu.exeris.caps.ratelimit.api.RateLimitPolicy;
+import eu.exeris.caps.serviceboundarycore.api.ApiSurfaceRegistry;
 import eu.exeris.caps.serviceboundarycore.api.RequestFilterChain;
 import eu.exeris.sdk.annotation.capability.CapabilityLifecycle;
 import eu.exeris.sdk.annotation.capability.CapabilityModule;
@@ -28,6 +29,7 @@ import java.time.Duration;
 @CapabilityLifecycle
 @Provides(service = RateLimitPolicy.class, version = "0.1.0")
 @Requires(service = RequestFilterChain.class, versionRange = "[0.1.0,0.2.0)", optional = true)
+@Requires(service = ApiSurfaceRegistry.class, versionRange = "[0.1.0,0.2.0)", optional = true)
 public final class RateLimitModule implements CapabilityLifecycleHooks {
 
     private final AdmissionHostBinding binding;
@@ -60,9 +62,22 @@ public final class RateLimitModule implements CapabilityLifecycleHooks {
         binding.attach();
     }
 
+    /**
+     * Verifies that the admission host is ready to serve requests under this module's limits.
+     *
+     * <p>Route validation runs here rather than at {@link #initialize()} because routes may be
+     * registered during other capability modules' initialization or after this module initializes.
+     * Running the check at {@code ready()} sees the routes registered by the time it runs. The filter
+     * is attached at {@code initialize()}, so a request can arrive earlier; the filter runs the same
+     * check on such a request and refuses it while a configured route is undeclared.
+     *
+     * @throws IllegalStateException if a configured route is not declared by any registered route
+     */
     @Override
     public void ready() {
-        // The limit is live from initialize(); nothing further to do.
+        if (binding != null) {
+            binding.ready();
+        }
     }
 
     @Override

@@ -22,6 +22,19 @@ public interface AdmissionHostBinding {
     /** Installs the limit in the host. */
     void attach();
 
+    /**
+     * Validates that the host is ready to serve requests under this binding.
+     *
+     * <p>Called from the module's {@code ready()} phase. Routes registered after this call are not
+     * seen by it, and a request may be served before it, so a binding that needs the check to hold
+     * in those cases applies it on the request path too.
+     *
+     * @throws IllegalStateException if configured limits cannot be verified against the host
+     * @since 0.1.0
+     */
+    default void ready() {
+    }
+
     /** Removes the limit from the host. */
     void detach();
 }
