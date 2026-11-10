@@ -143,6 +143,7 @@ class ProblemResponseAllocationTest {
 
         @Override
         public void respond(HttpStatus status) {
+            // a bodyless response carries nothing to measure in this double
         }
     }
 }

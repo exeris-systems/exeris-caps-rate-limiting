@@ -97,7 +97,7 @@ class ProblemResponseBufferTest {
         RecordingExchange exchange = exchange(HttpVersion.HTTP_1_1, RecordingExchange.Mode.ACCEPT_NOW);
         send(allocator, exchange, HttpStatus.TOO_MANY_REQUESTS, detail, List.of());
         byte[] want = expected(HttpStatus.TOO_MANY_REQUESTS, detail).getBytes(StandardCharsets.UTF_8);
-        assertThat(want.length).isGreaterThan(expected(HttpStatus.TOO_MANY_REQUESTS, detail).length());
+        assertThat(want).hasSizeGreaterThan(expected(HttpStatus.TOO_MANY_REQUESTS, detail).length());
         assertThat(exchange.bodyBytes).isEqualTo(want);
         assertThat(allocator.hints).containsExactly(smallestHint(want.length));
     }
@@ -272,7 +272,7 @@ class ProblemResponseBufferTest {
                     RecordingExchange exchange = exchange(HttpVersion.HTTP_1_1, mode);
                     try {
                         send(allocator, exchange);
-                    } catch (IllegalStateException expected) {
+                    } catch (IllegalStateException _) {
                         // the engine double refuses on purpose
                     }
                     exchange.completeDeferred();

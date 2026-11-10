@@ -134,8 +134,7 @@ class ProblemResponseHintTest {
         assertThat(allocator.networkCalls.get()).isZero();
         assertThat(allocator.hints).containsExactly(want);
         assertThat(exchange.bodySizeAtRespond).isEqualTo(length);
-        assertThat(exchange.bodyBytes).isEqualTo(expected(detail).getBytes(StandardCharsets.UTF_8));
-        assertThat(exchange.bodyBytes).hasSize(length);
+        assertThat(exchange.bodyBytes).isEqualTo(expected(detail).getBytes(StandardCharsets.UTF_8)).hasSize(length);
         assertThat(allocator.buffers.get(0).capacity()).isGreaterThanOrEqualTo(want.sizeBytes());
         exchange.header("Content-Length").ifPresent(v -> assertThat(v).isEqualTo(String.valueOf(length)));
         assertThat(allocator.finalReleases.get()).isEqualTo(1);
@@ -203,7 +202,8 @@ class ProblemResponseHintTest {
     void rejectedLarge() {
         TrackingAllocator allocator = new TrackingAllocator(base);
         RecordingExchange exchange = exchange(RecordingExchange.Mode.REJECT_BEFORE_TAKE);
-        assertThatThrownBy(() -> send(allocator, exchange, detailForBody(JUMBO))).isInstanceOf(IllegalStateException.class);
+        String detail = detailForBody(JUMBO);
+        assertThatThrownBy(() -> send(allocator, exchange, detail)).isInstanceOf(IllegalStateException.class);
         assertThat(allocator.hints).containsExactly(AllocationHint.JUMBO);
         assertThat(allocator.finalReleases.get()).isEqualTo(1);
         assertThat(allocator.buffers.get(0).closeCalls.get()).isEqualTo(1);
@@ -214,7 +214,8 @@ class ProblemResponseHintTest {
     void failedAfterReleaseLarge() {
         TrackingAllocator allocator = new TrackingAllocator(base);
         RecordingExchange exchange = exchange(RecordingExchange.Mode.FAIL_AFTER_RELEASE);
-        assertThatThrownBy(() -> send(allocator, exchange, detailForBody(20_000))).isInstanceOf(IllegalStateException.class);
+        String detail = detailForBody(20_000);
+        assertThatThrownBy(() -> send(allocator, exchange, detail)).isInstanceOf(IllegalStateException.class);
         assertThat(allocator.hints).containsExactly(AllocationHint.STREAMING_CHUNK);
         assertThat(allocator.finalReleases.get()).isEqualTo(1);
         assertThat(allocator.outstanding()).isZero();
@@ -241,7 +242,8 @@ class ProblemResponseHintTest {
         int length = 4097;
         TrackingAllocator allocator = TrackingAllocator.reportingCapacity(base, length - 1);
         RecordingExchange exchange = exchange(RecordingExchange.Mode.ACCEPT_NOW);
-        assertThatThrownBy(() -> send(allocator, exchange, detailForBody(length))).isInstanceOf(IllegalStateException.class);
+        String detail = detailForBody(length);
+        assertThatThrownBy(() -> send(allocator, exchange, detail)).isInstanceOf(IllegalStateException.class);
         assertThat(exchange.respondCalls).isZero();
         assertThat(allocator.finalReleases.get()).isEqualTo(1);
         assertThat(allocator.buffers.get(0).closeCalls.get()).isEqualTo(1);

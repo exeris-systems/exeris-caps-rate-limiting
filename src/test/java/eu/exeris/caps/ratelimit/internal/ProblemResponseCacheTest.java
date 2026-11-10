@@ -63,18 +63,10 @@ class ProblemResponseCacheTest {
         return new RecordingExchange(HttpMethod.POST, "/login", HttpVersion.HTTP_1_1, List.of(), mode);
     }
 
-    private static void send(MemoryAllocator allocator, HttpExchange exchange, HttpStatus status, String detail) {
-        send(ProblemResponses::send, allocator, exchange, status, detail);
-    }
-
     private static void send(Send sender, MemoryAllocator allocator, HttpExchange exchange, HttpStatus status,
                              String detail) {
         ScopedValue.where(KernelProviders.MEMORY_ALLOCATOR, allocator)
                 .run(() -> sender.send(exchange, status, detail, List.of(new HttpHeader("Retry-After", "7"))));
-    }
-
-    private static byte[] sendForBytes(MemoryAllocator allocator, HttpStatus status, String detail) {
-        return sendForBytes(ProblemResponses::send, allocator, status, detail);
     }
 
     private static byte[] sendForBytes(Send sender, MemoryAllocator allocator, HttpStatus status, String detail) {
@@ -150,6 +142,7 @@ class ProblemResponseCacheTest {
 
         @Override
         public void respond(HttpStatus status) {
+            // a bodyless response carries nothing to record in this double
         }
     }
 
@@ -270,7 +263,7 @@ class ProblemResponseCacheTest {
             perThreadDetails.add(mine);
             all.addAll(mine);
         }
-        assertThat(all.size()).isGreaterThan(BOUND * 4);
+        assertThat(all).hasSizeGreaterThan(BOUND * 4);
 
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch start = new CountDownLatch(1);
