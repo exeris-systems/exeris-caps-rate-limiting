@@ -25,6 +25,11 @@ import java.util.function.LongSupplier;
  * and the matched route; the request body is never read. A request over its limit is answered 429 with
  * {@code Retry-After} and a problem body. Routes outside every group pass untouched.
  *
+ * <p>When it is built with a route validator, every request runs the validator until it has succeeded
+ * once. A configured route that no registered route declares makes the validator throw
+ * {@link IllegalStateException}, which the host answers as a server error: a misconfigured limit refuses
+ * traffic instead of leaving its route unmetered. After the first success the request path reads one flag.
+ *
  * <p>This is the only part of the capability that touches HTTP types (ADR-099 obligation 4: the policy
  * caps bind as {@code RequestFilterChain} filters and answer the request themselves). It meters with a
  * {@link TokenBucketLimiter} rather than a {@link eu.exeris.caps.ratelimit.api.RateLimitPolicy}: the

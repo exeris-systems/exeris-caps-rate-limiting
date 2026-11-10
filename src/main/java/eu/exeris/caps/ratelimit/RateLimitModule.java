@@ -2,6 +2,7 @@ package eu.exeris.caps.ratelimit;
 
 import eu.exeris.caps.ratelimit.api.AdmissionHostBinding;
 import eu.exeris.caps.ratelimit.api.RateLimitPolicy;
+import eu.exeris.caps.serviceboundarycore.api.ApiSurfaceRegistry;
 import eu.exeris.caps.serviceboundarycore.api.RequestFilterChain;
 import eu.exeris.sdk.annotation.capability.CapabilityLifecycle;
 import eu.exeris.sdk.annotation.capability.CapabilityModule;
@@ -28,6 +29,7 @@ import java.time.Duration;
 @CapabilityLifecycle
 @Provides(service = RateLimitPolicy.class, version = "0.1.0")
 @Requires(service = RequestFilterChain.class, versionRange = "[0.1.0,0.2.0)", optional = true)
+@Requires(service = ApiSurfaceRegistry.class, versionRange = "[0.1.0,0.2.0)", optional = true)
 public final class RateLimitModule implements CapabilityLifecycleHooks {
 
     private final AdmissionHostBinding binding;
