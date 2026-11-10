@@ -78,6 +78,13 @@
             <version>${exeris.kernel.version}</version>
             <scope>test</scope>
         </dependency>
+        <!-- test only: the tests allocate response buffers from the community memory provider -->
+        <dependency>
+            <groupId>eu.exeris</groupId>
+            <artifactId>exeris-kernel-community</artifactId>
+            <version>${exeris.kernel.version}</version>
+            <scope>test</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>

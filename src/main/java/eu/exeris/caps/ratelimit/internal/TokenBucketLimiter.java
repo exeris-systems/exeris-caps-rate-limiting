@@ -15,7 +15,9 @@ import java.util.function.LongSupplier;
  *
  * <p>Keys are compared exactly, never by hash, so two clients never share a bucket by collision. The
  * number of live buckets never exceeds {@code maxKeys}: a new key reserves its place in a counter before
- * its bucket is inserted, so concurrent new keys cannot overshoot the bound. When the table is full, buckets that have refilled completely are
+ * its bucket is inserted, so concurrent new keys cannot overshoot the bound. A bucket is published only
+ * after its first token has been taken, so the sweep never drops a bucket that has not yet been charged.
+ * When the table is full, buckets that have refilled completely are
  * dropped (dropping one changes nothing, since a new bucket starts full). The sweep runs at most once per
  * refill period, because a bucket cannot become full sooner than one period after its last take. If none can be dropped, a new
  * key is refused rather than admitted unmetered, because these buckets guard credential endpoints where
@@ -70,15 +72,17 @@ public final class TokenBucketLimiter {
                     return RateLimitDecision.rejected(capacity, refillPeriodNanos);
                 }
             }
+            // The first token is taken before the bucket is published, so a published bucket is never
+            // full merely because it is new and a sweep cannot evict it ahead of its first take.
             Bucket fresh = new Bucket(capacity, now);
+            RateLimitDecision first = fresh.take(now, capacity, refillPeriodNanos);
             Bucket prior = buckets.putIfAbsent(key, fresh);
             if (prior == null) {
-                bucket = fresh;
-            } else {
-                // Another thread inserted this key first; its reservation holds the place.
-                live.decrementAndGet();
-                bucket = prior;
+                return first;
             }
+            // Another thread inserted this key first; its reservation holds the place.
+            live.decrementAndGet();
+            bucket = prior;
         }
         return bucket.take(now, capacity, refillPeriodNanos);
     }
