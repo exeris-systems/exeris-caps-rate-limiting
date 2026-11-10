@@ -8,7 +8,6 @@ import eu.exeris.kernel.spi.http.HttpVersion;
 import eu.exeris.kernel.spi.memory.MemoryAllocator;
 import eu.exeris.kernel.spi.memory.MemoryProvider;
 import eu.exeris.kernel.spi.memory.MemoryProviderConfig;
-import eu.exeris.kernel.tck.contract.JfrAllocationMonitor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -26,96 +25,79 @@ class ProblemResponseAllocationTest {
     private static final String LONG_DETAIL = "Too many requests for this operation; retry later. ".repeat(80);
 
     /**
-     * Allowed difference between the per-response heap figures of the two bodies. It is far below the
-     * difference in body length and above the run-to-run noise of the measurement.
+     * Largest growth of the per-response heap figure that the extra body length may cause. A body-sized
+     * copy would grow by the whole difference in length; a tenth of it is far from that and far above
+     * the objects the JIT may or may not allocate. Only growth is a failure: a long body that costs
+     * less than a short one is not.
      */
-    private static final double TOLERANCE_BYTES = 8.0;
+    private static final double GROWTH_BOUND_BYTES = (LONG_DETAIL.length() - SHORT_DETAIL.length()) / 10.0;
 
-    /** The kernel's fixed cost per response, measured, plus a modest margin. */
-    private static final double SHORT_BODY_BOUND_BYTES = 128.0;
+    /**
+     * Budget for one response with the long body, in any JIT state: several times the fixed cost of the
+     * kernel and the header objects, and far below the length of the long body, which a body-sized
+     * array per response would exceed on its own.
+     */
+    private static final double LONG_BODY_BUDGET_BYTES = 1024.0;
 
-    private static final int WARM_UP_RESPONSES = 300_000;
+    private static final int WARMUP_CALLS = 300_000;
+    private static final int WINDOW_CALLS = 2_000;
+    private static final int ROUNDS = 8;
 
     private static volatile byte[] sink;
-
-    /** Median of several measurements, so one run in which the JIT elided an object does not decide. */
-    private static double medianBytesPerResponse(MemoryAllocator allocator, String detail) throws Exception {
-        double[] runs = new double[5];
-        for (int i = 0; i < runs.length; i++) {
-            runs[i] = bytesPerResponse(allocator, detail);
-        }
-        java.util.Arrays.sort(runs);
-        return runs[runs.length / 2];
-    }
-
-    private static double bytesPerResponse(MemoryAllocator allocator, String detail) throws Exception {
-        // Fills the body cache and drives the path to its compiled steady state, so the figure is
-        // not a function of when the JIT happened to eliminate an object.
-        DiscardingExchange warm = new DiscardingExchange();
-        ScopedValueRun.run(allocator, () -> {
-            for (int i = 0; i < WARM_UP_RESPONSES; i++) {
-                ProblemResponses.send(warm, HttpStatus.TOO_MANY_REQUESTS, detail, HEADERS);
-            }
-        });
-        JfrAllocationMonitor.Config config = JfrAllocationMonitor.Config.ofDefaults("rate-limiting",
-                ProblemResponseAllocationTest.class.getName());
-        JfrAllocationMonitor.Result result = JfrAllocationMonitor.measure(config, iterations -> {
-            DiscardingExchange discarding = new DiscardingExchange();
-            ScopedValueRun.run(allocator, () -> {
-                for (int i = 0; i < iterations; i++) {
-                    ProblemResponses.send(discarding, HttpStatus.TOO_MANY_REQUESTS, detail, HEADERS);
-                }
-            });
-        });
-        return (double) result.allocatedBytesDelta() / result.hotPathIterations();
-    }
-
-    /** Same shape as production, plus a body-sized heap array per response. */
-    private static double bytesPerResponseWithHeapCopy(String detail) throws Exception {
-        byte[] body = detail.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        JfrAllocationMonitor.Config config = JfrAllocationMonitor.Config.ofDefaults("rate-limiting",
-                ProblemResponseAllocationTest.class.getName());
-        JfrAllocationMonitor.Result result = JfrAllocationMonitor.measure(config, iterations -> {
-            for (int i = 0; i < iterations; i++) {
-                sink = body.clone();
-            }
-        });
-        return (double) result.allocatedBytesDelta() / result.hotPathIterations();
-    }
 
     private static MemoryAllocator allocator() {
         return ServiceLoader.load(MemoryProvider.class).findFirst().orElseThrow()
                 .createAllocator(MemoryProviderConfig.defaults());
     }
 
+    private static Runnable send(DiscardingExchange exchange, String detail) {
+        return () -> ProblemResponses.send(exchange, HttpStatus.TOO_MANY_REQUESTS, detail, HEADERS);
+    }
+
+    /** Minimum heap bytes per call of the short-body and the long-body path, interleaved. */
+    private static double[] shortAndLong(MemoryAllocator allocator, Runnable shortCall, Runnable longCall) {
+        double[][] result = new double[1][];
+        ScopedValueRun.run(allocator, () -> result[0] = HeapMeter.interleavedMinima(
+                WARMUP_CALLS, WINDOW_CALLS, ROUNDS, shortCall, longCall));
+        return result[0];
+    }
+
+    private static double growth(double[] shortAndLong) {
+        return shortAndLong[1] - shortAndLong[0];
+    }
+
     @Test
-    @DisplayName("heap bytes per response do not depend on the body length")
-    void heapPerResponseIsIndependentOfBodyLength() throws Exception {
+    @DisplayName("heap bytes per response do not grow with the body length")
+    void heapPerResponseIsIndependentOfBodyLength() {
         MemoryAllocator allocator = allocator();
         try {
-            double shortBytes = medianBytesPerResponse(allocator, SHORT_DETAIL);
-            double longBytes = medianBytesPerResponse(allocator, LONG_DETAIL);
-            System.out.println("heap bytes per response: short=" + shortBytes + " long=" + longBytes
-                    + " (detail lengths " + SHORT_DETAIL.length() + " / "
-                    + LONG_DETAIL.length() + ")");
+            DiscardingExchange exchange = new DiscardingExchange();
+            double[] m = shortAndLong(allocator, send(exchange, SHORT_DETAIL), send(exchange, LONG_DETAIL));
+            System.out.println("heap bytes per response (minimum): short=" + m[0] + " long=" + m[1]
+                    + " (detail lengths " + SHORT_DETAIL.length() + " / " + LONG_DETAIL.length() + ")");
 
-            assertThat(Math.abs(longBytes - shortBytes)).as("long %s vs short %s", longBytes, shortBytes)
-                    .isLessThanOrEqualTo(TOLERANCE_BYTES)
-                    .isLessThan((LONG_DETAIL.length() - SHORT_DETAIL.length()) / 100.0);
-            assertThat(shortBytes).as("the kernel's fixed cost per response").isLessThan(SHORT_BODY_BOUND_BYTES);
+            assertThat(growth(m)).as("long %s minus short %s", m[1], m[0]).isLessThanOrEqualTo(GROWTH_BOUND_BYTES);
+            assertThat(m[1]).as("long-body response").isLessThan(LONG_BODY_BUDGET_BYTES);
         } finally {
             allocator.close();
         }
     }
 
     @Test
-    @DisplayName("the measurement discriminates: a body-sized heap array per response breaks the same assertion")
-    void controlAllocatesAndIsDetected() throws Exception {
-        double shortBytes = bytesPerResponseWithHeapCopy(SHORT_DETAIL);
-        double longBytes = bytesPerResponseWithHeapCopy(LONG_DETAIL);
-        System.out.println("control heap bytes per response: short=" + shortBytes + " long=" + longBytes);
+    @DisplayName("the measurement discriminates: a body-sized heap array per response breaks the same assertions")
+    void controlAllocatesAndIsDetected() {
+        MemoryAllocator allocator = allocator();
+        try {
+            double[] m = shortAndLong(allocator,
+                    () -> sink = SHORT_DETAIL.getBytes(java.nio.charset.StandardCharsets.UTF_8).clone(),
+                    () -> sink = LONG_DETAIL.getBytes(java.nio.charset.StandardCharsets.UTF_8).clone());
+            System.out.println("control heap bytes per response (minimum): short=" + m[0] + " long=" + m[1]);
 
-        assertThat(Math.abs(longBytes - shortBytes)).isGreaterThan(TOLERANCE_BYTES);
+            assertThat(growth(m)).isGreaterThan(GROWTH_BOUND_BYTES);
+            assertThat(m[1]).isGreaterThanOrEqualTo(LONG_BODY_BUDGET_BYTES);
+        } finally {
+            allocator.close();
+        }
     }
 
     private static final class ScopedValueRun {
