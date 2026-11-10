@@ -19,7 +19,11 @@ import java.util.ServiceLoader;
 @DisplayName("the 429 body is not allocated on the heap per response")
 class ProblemResponseAllocationTest {
 
-    private static final String DETAIL = "Too many requests for this operation; retry later.";
+    /**
+     * Long enough that a body-sized array dwarfs the kernel's fixed per-allocation cost (one buffer handle
+     * plus the response record), which no caller can avoid.
+     */
+    private static final String DETAIL = "Too many requests for this operation; retry later. ".repeat(12);
     private static final List<HttpHeader> HEADERS = List.of(new HttpHeader("Retry-After", "7"));
 
     @Test
