@@ -14,7 +14,7 @@ import eu.exeris.kernel.spi.memory.MemoryProviderConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.lang.management.ManagementFactory;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,18 +31,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The body cache has a fixed upper bound; a response is the same whether or not its body was cached.
  *
- * <p>The cache size is not exposed, so the bound is observed through heap allocation: sending a
- * long detail whose body is cached allocates far less than the body, one that is not cached allocates
- * at least the encoded body.
+ * <p>The bound is observed through the package-private count the cache enforces it against, on a copy
+ * of the class with its own empty cache, so the result does not depend on other tests in the JVM.
  */
 @DisplayName("the problem body cache is bounded and does not change the bytes sent")
 class ProblemResponseCacheTest {
 
     private static final int BOUND = ProblemResponses.MAX_CACHED_BODIES;
     private static final int LONG_DETAIL_CHARS = 3000;
-    /** Far below the size of an encoded long body and far above the fixed per-response cost. */
-    private static final long UNCACHED_THRESHOLD_BYTES = 2000;
-    private static final int WARM_UP = 20_000;
 
     private static MemoryAllocator allocator() {
         return ServiceLoader.load(MemoryProvider.class).findFirst().orElseThrow()
@@ -81,11 +77,55 @@ class ProblemResponseCacheTest {
         void send(HttpExchange exchange, HttpStatus status, String detail, List<HttpHeader> headers);
     }
 
+    /** A copy of {@link ProblemResponses} with its own cache, reached through its entry point and observers. */
+    private static final class IsolatedCache implements Send {
+        private final java.lang.invoke.MethodHandle send;
+        private final Method count;
+        private final Method cached;
+
+        IsolatedCache(Class<?> copy) throws ReflectiveOperationException {
+            send = java.lang.invoke.MethodHandles.publicLookup().findStatic(copy, "send",
+                    java.lang.invoke.MethodType.methodType(void.class, HttpExchange.class, HttpStatus.class,
+                            String.class, List.class));
+            count = copy.getDeclaredMethod("cachedBodyCount");
+            count.setAccessible(true);
+            cached = copy.getDeclaredMethod("isCached", HttpStatus.class, String.class);
+            cached.setAccessible(true);
+        }
+
+        @Override
+        public void send(HttpExchange exchange, HttpStatus status, String detail, List<HttpHeader> headers) {
+            try {
+                send.invokeExact(exchange, status, detail, headers);
+            } catch (RuntimeException | Error e) {
+                throw e;
+            } catch (Throwable e) {
+                throw new AssertionError(e);
+            }
+        }
+
+        int count() {
+            try {
+                return (int) count.invoke(null);
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
+            }
+        }
+
+        boolean isCached(HttpStatus status, String detail) {
+            try {
+                return (boolean) cached.invoke(null, status, detail);
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
+            }
+        }
+    }
+
     /**
      * A copy of {@link ProblemResponses} defined by its own class loader, so its cache starts empty
      * whatever other tests in the JVM have already put into the shared one.
      */
-    private static Send withEmptyCache() throws Exception {
+    private static IsolatedCache withEmptyCache() throws Exception {
         String[] names = {ProblemResponses.class.getName(), ProblemResponses.class.getName() + "$Headers"};
         ClassLoader parent = ProblemResponses.class.getClassLoader();
         ClassLoader isolated = new ClassLoader(parent) {
@@ -110,18 +150,9 @@ class ProblemResponseCacheTest {
         };
         Class<?> copy = isolated.loadClass(names[0]);
         assertThat(copy).isNotSameAs(ProblemResponses.class);
-        java.lang.invoke.MethodHandle handle = java.lang.invoke.MethodHandles.publicLookup().findStatic(copy, "send",
-                java.lang.invoke.MethodType.methodType(void.class, HttpExchange.class, HttpStatus.class, String.class,
-                        List.class));
-        return (exchange, status, detail, headers) -> {
-            try {
-                handle.invokeExact(exchange, status, detail, headers);
-            } catch (RuntimeException | Error e) {
-                throw e;
-            } catch (Throwable e) {
-                throw new AssertionError(e);
-            }
-        };
+        IsolatedCache cache = new IsolatedCache(copy);
+        assertThat(cache.count()).as("a fresh copy starts empty").isZero();
+        return cache;
     }
 
     /** Releases the body at once and copies nothing. */
@@ -146,71 +177,59 @@ class ProblemResponseCacheTest {
         }
     }
 
-    private static long allocatedByCurrentThread() {
-        return ((com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean()).getCurrentThreadAllocatedBytes();
-    }
-
-    /** Heap bytes allocated by one send of the detail on this thread, after the path has been warmed. */
-    private static long heapBytesOfOneSend(Send sender, MemoryAllocator allocator, HttpStatus status, String detail) {
-        DiscardingExchange exchange = new DiscardingExchange();
-        long[] bytes = new long[1];
-        ScopedValue.where(KernelProviders.MEMORY_ALLOCATOR, allocator).run(() -> {
-            long before = allocatedByCurrentThread();
-            sender.send(exchange, status, detail, List.of());
-            bytes[0] = allocatedByCurrentThread() - before;
-        });
-        return bytes[0];
-    }
-
-    private static void warmUp(Send sender, MemoryAllocator allocator) {
-        DiscardingExchange exchange = new DiscardingExchange();
-        ScopedValue.where(KernelProviders.MEMORY_ALLOCATOR, allocator).run(() -> {
-            for (int i = 0; i < WARM_UP; i++) {
-                sender.send(exchange, HttpStatus.TOO_MANY_REQUESTS, "warm-up detail", List.of());
-            }
-        });
-    }
-
-    /** Counts the details whose body is retained, by probing each once. Probing never inserts into a full cache. */
-    private static int countRetained(Send sender, MemoryAllocator allocator, HttpStatus status, List<String> details) {
-        int retained = 0;
-        for (String detail : details) {
-            long bytes = heapBytesOfOneSend(sender, allocator, status, detail);
-            if (bytes < UNCACHED_THRESHOLD_BYTES) {
-                retained++;
-            }
+    private static List<String> details(String tag, int n) {
+        List<String> details = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            details.add(longDetail(tag, i));
         }
-        return retained;
+        return details;
+    }
+
+    private static void sendAll(Send sender, MemoryAllocator allocator, HttpStatus status, List<String> details) {
+        DiscardingExchange exchange = new DiscardingExchange();
+        ScopedValue.where(KernelProviders.MEMORY_ALLOCATOR, allocator).run(() -> {
+            for (String detail : details) {
+                sender.send(exchange, status, detail, List.of());
+            }
+        });
     }
 
     @Test
-    @DisplayName("sequentially, no more than the bound of distinct long details is retained, and the cache stays full afterwards")
+    @DisplayName("sequentially, exactly the bound of distinct details is retained and the first ones are the ones kept")
     void sequentialBound() throws Exception {
-        Send sender = withEmptyCache();
+        IsolatedCache cache = withEmptyCache();
         MemoryAllocator allocator = allocator();
         try {
-            warmUp(sender, allocator);
-            int distinct = BOUND * 4;
-            List<String> details = new ArrayList<>();
-            for (int i = 0; i < distinct; i++) {
-                details.add(longDetail("seq", i));
+            List<String> details = details("seq", BOUND * 4);
+            sendAll(cache, allocator, HttpStatus.TOO_MANY_REQUESTS, details);
+            assertThat(cache.count()).as("distinct details retained").isEqualTo(BOUND);
+            for (int i = 0; i < details.size(); i++) {
+                assertThat(cache.isCached(HttpStatus.TOO_MANY_REQUESTS, details.get(i)))
+                        .as("detail %d retained", i).isEqualTo(i < BOUND);
             }
-            DiscardingExchange exchange = new DiscardingExchange();
-            ScopedValue.where(KernelProviders.MEMORY_ALLOCATOR, allocator).run(() -> {
-                for (String detail : details) {
-                    sender.send(exchange, HttpStatus.TOO_MANY_REQUESTS, detail, List.of());
-                }
-            });
-            int retained = countRetained(sender, allocator, HttpStatus.TOO_MANY_REQUESTS, details);
-            // one slot is taken by the warm-up detail
-            assertThat(retained).as("distinct details retained").isBetween(BOUND - 1, BOUND);
+        } finally {
+            allocator.close();
+        }
+    }
 
-            // a detail first seen now is not retained either: the cache does not grow past the bound
+    @Test
+    @DisplayName("a detail first seen when the cache is full is not retained and leaves the count unchanged")
+    void fullCacheDoesNotGrow() throws Exception {
+        IsolatedCache cache = withEmptyCache();
+        MemoryAllocator allocator = allocator();
+        try {
+            sendAll(cache, allocator, HttpStatus.TOO_MANY_REQUESTS, details("fill", BOUND));
+            assertThat(cache.count()).isEqualTo(BOUND);
+
             String late = longDetail("late", 0);
-            send(sender, allocator, exchange, HttpStatus.TOO_MANY_REQUESTS, late);
-            assertThat(heapBytesOfOneSend(sender, allocator, HttpStatus.TOO_MANY_REQUESTS, late))
-                    .as("a detail first seen when the cache is full is encoded per response")
-                    .isGreaterThanOrEqualTo(UNCACHED_THRESHOLD_BYTES);
+            sendAll(cache, allocator, HttpStatus.TOO_MANY_REQUESTS, List.of(late, late));
+            assertThat(cache.isCached(HttpStatus.TOO_MANY_REQUESTS, late)).isFalse();
+            assertThat(cache.count()).isEqualTo(BOUND);
+
+            // a status never seen before gets no entry either
+            sendAll(cache, allocator, HttpStatus.FORBIDDEN, List.of(late));
+            assertThat(cache.isCached(HttpStatus.FORBIDDEN, late)).isFalse();
+            assertThat(cache.count()).isEqualTo(BOUND);
         } finally {
             allocator.close();
         }
@@ -219,29 +238,25 @@ class ProblemResponseCacheTest {
     @Test
     @DisplayName("the bound counts all statuses together")
     void boundSpansStatuses() throws Exception {
-        Send sender = withEmptyCache();
+        IsolatedCache cache = withEmptyCache();
         MemoryAllocator allocator = allocator();
         try {
-            warmUp(sender, allocator);
             List<HttpStatus> statuses = List.of(HttpStatus.TOO_MANY_REQUESTS, HttpStatus.UNAUTHORIZED,
                     HttpStatus.SERVICE_UNAVAILABLE, HttpStatus.FORBIDDEN);
-            DiscardingExchange exchange = new DiscardingExchange();
-            List<String> details = new ArrayList<>();
-            for (int i = 0; i < BOUND; i++) {
-                details.add(longDetail("st", i));
+            List<String> details = details("st", BOUND);
+            for (HttpStatus status : statuses) {
+                sendAll(cache, allocator, status, details);
             }
-            ScopedValue.where(KernelProviders.MEMORY_ALLOCATOR, allocator).run(() -> {
-                for (HttpStatus status : statuses) {
-                    for (String detail : details) {
-                        sender.send(exchange, status, detail, List.of());
+            assertThat(cache.count()).as("bodies retained over %d statuses", statuses.size()).isEqualTo(BOUND);
+            int observed = 0;
+            for (HttpStatus status : statuses) {
+                for (String detail : details) {
+                    if (cache.isCached(status, detail)) {
+                        observed++;
                     }
                 }
-            });
-            int retained = 0;
-            for (HttpStatus status : statuses) {
-                retained += countRetained(sender, allocator, status, details);
             }
-            assertThat(retained).as("bodies retained over %d statuses", statuses.size()).isLessThanOrEqualTo(BOUND);
+            assertThat(observed).as("entries found by lookup").isEqualTo(BOUND);
         } finally {
             allocator.close();
         }
@@ -250,20 +265,16 @@ class ProblemResponseCacheTest {
     @Test
     @DisplayName("many threads with distinct details finish, answer correctly, and exceed the bound by at most the thread count")
     void concurrentBoundAndCompletion() throws Exception {
-        Send sender = withEmptyCache();
+        IsolatedCache cache = withEmptyCache();
         int threads = 16;
         int perThread = 200;
         List<List<String>> perThreadDetails = new ArrayList<>();
-        List<String> all = new ArrayList<>();
+        int total = 0;
         for (int t = 0; t < threads; t++) {
-            List<String> mine = new ArrayList<>();
-            for (int i = 0; i < perThread; i++) {
-                mine.add(longDetail("c" + t, i));
-            }
-            perThreadDetails.add(mine);
-            all.addAll(mine);
+            perThreadDetails.add(details("c" + t, perThread));
+            total += perThread;
         }
-        assertThat(all).hasSizeGreaterThan(BOUND * 4);
+        assertThat(total).isGreaterThan(BOUND * 4);
 
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch start = new CountDownLatch(1);
@@ -277,7 +288,7 @@ class ProblemResponseCacheTest {
                     try {
                         start.await();
                         for (String detail : mine) {
-                            byte[] got = sendForBytes(sender, allocator, HttpStatus.TOO_MANY_REQUESTS, detail);
+                            byte[] got = sendForBytes(cache, allocator, HttpStatus.TOO_MANY_REQUESTS, detail);
                             byte[] want = expected(HttpStatus.TOO_MANY_REQUESTS, detail).getBytes(StandardCharsets.UTF_8);
                             if (!java.util.Arrays.equals(got, want)) {
                                 wrong.incrementAndGet();
@@ -297,13 +308,26 @@ class ProblemResponseCacheTest {
             pool.shutdownNow();
         }
         assertThat(wrong.get()).as("responses with wrong bytes").isZero();
+        assertThat(cache.count()).as("details retained by %d concurrent callers", threads)
+                .isBetween(BOUND, BOUND + threads);
+    }
 
+    @Test
+    @DisplayName("the shared cache adds one entry for a new detail, or none when already full, whatever ran before")
+    void sharedCacheAccountsForExistingEntries() throws Exception {
         MemoryAllocator allocator = allocator();
         try {
-            warmUp(sender, allocator);
-            int retained = countRetained(sender, allocator, HttpStatus.TOO_MANY_REQUESTS, all);
-            assertThat(retained).as("details retained by %d concurrent callers", threads)
-                    .isBetween(BOUND, BOUND + threads);
+            int before = ProblemResponses.cachedBodyCount();
+            String detail = "shared-cache-probe-" + System.nanoTime();
+            sendAll(ProblemResponses::send, allocator, HttpStatus.TOO_MANY_REQUESTS, List.of(detail, detail));
+            int after = ProblemResponses.cachedBodyCount();
+            if (before < BOUND) {
+                assertThat(ProblemResponses.isCached(HttpStatus.TOO_MANY_REQUESTS, detail)).isTrue();
+                assertThat(after).isEqualTo(before + 1);
+            } else {
+                assertThat(ProblemResponses.isCached(HttpStatus.TOO_MANY_REQUESTS, detail)).isFalse();
+                assertThat(after).isEqualTo(before);
+            }
         } finally {
             allocator.close();
         }
