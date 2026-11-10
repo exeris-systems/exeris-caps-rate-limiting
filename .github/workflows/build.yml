@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   build:
@@ -21,13 +20,6 @@ jobs:
         # sources still compile on the next JDK. Both rows produce class-file major 69.
         java: ['25', '26']
 
-    env:
-      # exeris-kernel is resolved from GitHub Packages, which asks for a token even for a public
-      # package, and a repository's own GITHUB_TOKEN cannot read packages published by another
-      # repository. PACKAGES_READ_TOKEN is a classic PAT with read:packages, set as a repository or
-      # organisation secret. .github/maven-settings.xml is the only place it is used.
-      PACKAGES_READ_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
-
     steps:
       - name: Checkout exeris-caps-rate-limiting
         uses: actions/checkout@v7
@@ -37,11 +29,11 @@ jobs:
       # service-boundary-core provides the RequestFilterChain the filter binds to. It has no release
       # yet, so a commit SHA is the immutable ref: a change on its main moves this build only when the
       # SHA is bumped here.
-      - name: Checkout exeris-caps-service-boundary-core (dd26c9a)
+      - name: Checkout exeris-caps-service-boundary-core (d2ef07b)
         uses: actions/checkout@v7
         with:
           repository: exeris-systems/exeris-caps-service-boundary-core
-          ref: dd26c9acfaefaf025d482af8c592acffad49ecf3
+          ref: d2ef07b59ba2340c5a2dfd7112b9c46890d7085b
           path: exeris-caps-service-boundary-core
 
       - name: Set up JDK ${{ matrix.java }}
@@ -51,28 +43,21 @@ jobs:
           java-version: ${{ matrix.java }}
           cache: maven
 
-      - name: Check that the package-read token is set
-        run: |
-          if [ -z "${PACKAGES_READ_TOKEN}" ]; then
-            echo "::error::PACKAGES_READ_TOKEN is not set, so exeris-kernel cannot be resolved from GitHub Packages"
-            exit 1
-          fi
-
-      # Built with the SDK and tooling versions its own POM declares, which resolve from Maven Central.
+      # Built with the kernel, SDK and tooling versions its own POM declares, which resolve from Maven Central.
       # Its committed manifest is not regenerated here; its own CI owns that check.
       - name: Install exeris-caps-service-boundary-core to the local repository
         working-directory: exeris-caps-service-boundary-core
-        run: mvn -B -ntp -s .github/maven-settings.xml -DskipTests -Dexeris.codegen.skip=true install
+        run: mvn -B -ntp -DskipTests -Dexeris.codegen.skip=true install
 
       # Two passes, and the first is not redundant: exeris:generate runs at generate-sources, but the
       # processor writes the capability metadata it reads only during compile.
       - name: Seed capability metadata (first pass, codegen skipped)
         working-directory: exeris-caps-rate-limiting
-        run: mvn -B -ntp -s .github/maven-settings.xml compile -Dexeris.codegen.skip=true
+        run: mvn -B -ntp compile -Dexeris.codegen.skip=true
 
       - name: mvn verify (second pass — generates, validates, scans the Wall)
         working-directory: exeris-caps-rate-limiting
-        run: mvn -B -ntp -s .github/maven-settings.xml verify
+        run: mvn -B -ntp verify
 
       - name: Assert the cap manifest was emitted and stamped
         working-directory: exeris-caps-rate-limiting

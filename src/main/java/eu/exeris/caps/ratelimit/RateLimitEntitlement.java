@@ -35,6 +35,11 @@ public final class RateLimitEntitlement implements EntitlementRequirement {
         return REQUIRED;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Always returns {@link EntitlementClass#COMMERCIAL} on every invocation.
+     */
     @Override
     public EntitlementClass entitlementClass() {
         return EntitlementClass.COMMERCIAL;
