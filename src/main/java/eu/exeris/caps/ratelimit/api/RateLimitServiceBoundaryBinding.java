@@ -18,11 +18,11 @@ import java.util.function.LongSupplier;
  *
  * <p>This type and the internal admission filter are the only types that load Service Boundary classes, so
  * a composition without {@code service-boundary-core} never loads them. {@code RateLimitModule} names
- * {@link RequestFilterChain} only in its source-retention {@code @Requires} and in Javadoc, so it leaves no
- * reference in the class file.
+ * {@link RequestFilterChain} and {@link ApiSurfaceRegistry} only in its source-retention {@code @Requires}
+ * and in Javadoc, so it leaves no reference in the class file.
  *
- * <p>Configured routes are verified against the registered routes in {@link #ready()}, before the first
- * request is served.
+ * <p>Configured routes are verified against the registered routes in {@link #ready()}. A request that
+ * arrives before that call is checked on the request path by the admission filter.
  *
  * @since 0.1.0
  */
