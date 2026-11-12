@@ -12,6 +12,7 @@ import eu.exeris.kernel.spi.http.HttpHeader;
 import eu.exeris.kernel.spi.http.HttpMethod;
 import eu.exeris.kernel.spi.http.HttpStatus;
 import eu.exeris.kernel.spi.http.HttpVersion;
+import eu.exeris.kernel.spi.http.RouteRequirement;
 import eu.exeris.kernel.spi.memory.MemoryAllocator;
 import eu.exeris.kernel.spi.memory.MemoryProvider;
 import eu.exeris.kernel.spi.memory.MemoryProviderConfig;
@@ -68,6 +69,7 @@ class RateLimitServiceBoundaryFilterTest {
                     .method(HttpMethod.POST)
                     .pathPattern(path)
                     .actionName(path)
+                    .requirements(List.of(RouteRequirement.permitAll()))
                     .handler(ex -> ex.respond(HttpStatus.OK))
                     .build());
         }
@@ -293,7 +295,9 @@ class RateLimitServiceBoundaryFilterTest {
                 exchange -> Optional.empty(), clock::get));
         testModule.initialize();
         sbc.apiSurfaceRegistry().registerRoute(ApiSurfaceRoute.builder().method(HttpMethod.POST).pathPattern("/login")
-                .actionName("login").handler(ex -> ex.respond(HttpStatus.OK)).build());
+                .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
+                .handler(ex -> ex.respond(HttpStatus.OK)).build());
         testModule.ready();
 
         RecordingExchange first = new RecordingExchange(HttpMethod.POST, "/login", List.of());
@@ -320,6 +324,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/login")
                 .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
         mod.ready();
@@ -341,6 +346,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/login")
                 .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
         assertThatThrownBy(mod::ready)
@@ -364,6 +370,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/reset/{id}")
                 .actionName("reset")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
         assertThatThrownBy(mod::ready)
@@ -391,6 +398,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/verify")
                 .actionName("verify")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
 
@@ -418,6 +426,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/login")
                 .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
         RecordingExchange exchange = new RecordingExchange(HttpMethod.POST, "/auth/login", List.of());
@@ -454,6 +463,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/login")
                 .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
 
