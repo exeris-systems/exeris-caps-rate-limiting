@@ -12,6 +12,7 @@ import eu.exeris.kernel.spi.http.HttpHeader;
 import eu.exeris.kernel.spi.http.HttpMethod;
 import eu.exeris.kernel.spi.http.HttpStatus;
 import eu.exeris.kernel.spi.http.HttpVersion;
+import eu.exeris.kernel.spi.http.RouteRequirement;
 import eu.exeris.kernel.spi.memory.MemoryAllocator;
 import eu.exeris.kernel.spi.memory.MemoryProvider;
 import eu.exeris.kernel.spi.memory.MemoryProviderConfig;
@@ -49,7 +50,7 @@ class RateLimitServiceBoundaryFilterTest {
         base = ServiceLoader.load(MemoryProvider.class).findFirst().orElseThrow()
                 .createAllocator(MemoryProviderConfig.defaults());
         allocator = new TrackingAllocator(base);
-        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ServiceBoundaryCoreModule sbc = ServiceBoundaryCoreModule.builder().strictRoutes(true).build();
         registry = sbc.apiSurfaceRegistry();
         RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
                 RateLimitFilterSettings.KEY_GROUPS, "login,password-reset",
@@ -68,6 +69,7 @@ class RateLimitServiceBoundaryFilterTest {
                     .method(HttpMethod.POST)
                     .pathPattern(path)
                     .actionName(path)
+                    .requirements(List.of(RouteRequirement.permitAll()))
                     .handler(ex -> ex.respond(HttpStatus.OK))
                     .build());
         }
@@ -284,7 +286,7 @@ class RateLimitServiceBoundaryFilterTest {
 
     @Test
     void peerUnknownSharesOneBucket() {
-        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ServiceBoundaryCoreModule sbc = ServiceBoundaryCoreModule.builder().strictRoutes(true).build();
         RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
                 RateLimitFilterSettings.KEY_GROUPS, "login",
                 "exeris.caps.ratelimit.group.login.routes", "POST /login",
@@ -293,7 +295,9 @@ class RateLimitServiceBoundaryFilterTest {
                 exchange -> Optional.empty(), clock::get));
         testModule.initialize();
         sbc.apiSurfaceRegistry().registerRoute(ApiSurfaceRoute.builder().method(HttpMethod.POST).pathPattern("/login")
-                .actionName("login").handler(ex -> ex.respond(HttpStatus.OK)).build());
+                .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
+                .handler(ex -> ex.respond(HttpStatus.OK)).build());
         testModule.ready();
 
         RecordingExchange first = new RecordingExchange(HttpMethod.POST, "/login", List.of());
@@ -307,7 +311,7 @@ class RateLimitServiceBoundaryFilterTest {
     @Test
     @DisplayName("a matching route passes validation at ready()")
     void matchingRoutePassesValidation() {
-        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ServiceBoundaryCoreModule sbc = ServiceBoundaryCoreModule.builder().strictRoutes(true).build();
         ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
         RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
                 RateLimitFilterSettings.KEY_GROUPS, "login",
@@ -320,6 +324,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/login")
                 .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
         mod.ready();
@@ -328,7 +333,7 @@ class RateLimitServiceBoundaryFilterTest {
     @Test
     @DisplayName("a typo in a configured route fails at ready() naming the undeclared route")
     void typoInConfiguredRouteFailsAtReady() {
-        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ServiceBoundaryCoreModule sbc = ServiceBoundaryCoreModule.builder().strictRoutes(true).build();
         ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
         RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
                 RateLimitFilterSettings.KEY_GROUPS, "login",
@@ -341,6 +346,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/login")
                 .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
         assertThatThrownBy(mod::ready)
@@ -351,7 +357,7 @@ class RateLimitServiceBoundaryFilterTest {
     @Test
     @DisplayName("a differently written template fails at ready() naming the undeclared route")
     void differentlyWrittenTemplateFailsAtReady() {
-        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ServiceBoundaryCoreModule sbc = ServiceBoundaryCoreModule.builder().strictRoutes(true).build();
         ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
         RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
                 RateLimitFilterSettings.KEY_GROUPS, "reset",
@@ -364,6 +370,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/reset/{id}")
                 .actionName("reset")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
         assertThatThrownBy(mod::ready)
@@ -374,7 +381,7 @@ class RateLimitServiceBoundaryFilterTest {
     @Test
     @DisplayName("a route registered after the filter passes validation at ready()")
     void routeRegisteredAfterFilterPassesAtReady() {
-        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ServiceBoundaryCoreModule sbc = ServiceBoundaryCoreModule.builder().strictRoutes(true).build();
         ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
         RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
                 RateLimitFilterSettings.KEY_GROUPS, "verify",
@@ -391,6 +398,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/verify")
                 .actionName("verify")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
 
@@ -405,7 +413,7 @@ class RateLimitServiceBoundaryFilterTest {
     @Test
     @DisplayName("an undeclared route halts admission with 500 if ready() was not called before serving a request")
     void undeclaredRouteFailsBeforeFirstRequest() {
-        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ServiceBoundaryCoreModule sbc = ServiceBoundaryCoreModule.builder().strictRoutes(true).build();
         ApiSurfaceRegistry reg = sbc.apiSurfaceRegistry();
         RateLimitFilterSettings settings = RateLimitFilterSettings.fromProperties(Map.of(
                 RateLimitFilterSettings.KEY_GROUPS, "login",
@@ -418,6 +426,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/login")
                 .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
         RecordingExchange exchange = new RecordingExchange(HttpMethod.POST, "/auth/login", List.of());
@@ -428,7 +437,7 @@ class RateLimitServiceBoundaryFilterTest {
     @Test
     @DisplayName("a request before ready() under a valid configuration is admitted and validates the routes once")
     void validConfigurationAdmitsRequestBeforeReady() {
-        ServiceBoundaryCoreModule sbc = new ServiceBoundaryCoreModule();
+        ServiceBoundaryCoreModule sbc = ServiceBoundaryCoreModule.builder().strictRoutes(true).build();
         ApiSurfaceRegistry real = sbc.apiSurfaceRegistry();
         AtomicInteger routeReads = new AtomicInteger();
         ApiSurfaceRegistry counting = (ApiSurfaceRegistry) Proxy.newProxyInstance(
@@ -454,6 +463,7 @@ class RateLimitServiceBoundaryFilterTest {
                 .method(HttpMethod.POST)
                 .pathPattern("/auth/login")
                 .actionName("login")
+                .requirements(List.of(RouteRequirement.permitAll()))
                 .handler(ex -> ex.respond(HttpStatus.OK))
                 .build());
 
